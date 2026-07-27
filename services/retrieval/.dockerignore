@@ -1,0 +1,6 @@
+.venv
+tests
+__pycache__
+**/__pycache__
+*.graphml
+.pytest_cache

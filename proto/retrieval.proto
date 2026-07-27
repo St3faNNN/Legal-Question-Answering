@@ -1,0 +1,30 @@
+syntax = "proto3";
+
+package graphrag.retrieval.v1;
+
+option php_namespace = "App\\Grpc\\Pb\\Retrieval";
+option php_metadata_namespace = "App\\Grpc\\Pb\\Retrieval\\GPBMetadata";
+
+// Retrieval Service: a natural-language question in, linked knowledge-graph
+// context out. No language generation, no knowledge of users or conversations.
+service Retrieval {
+  rpc Retrieve(RetrieveRequest) returns (RetrieveResponse);
+}
+
+message RetrieveRequest {
+  string question = 1;
+}
+
+message Triple {
+  string head = 1;
+  string relation = 2;
+  string tail = 3;
+  double confidence = 4;
+}
+
+message RetrieveResponse {
+  string context = 1;
+  repeated string entities = 2;
+  repeated Triple triples = 3;
+  int32 latency_ms = 4;
+}

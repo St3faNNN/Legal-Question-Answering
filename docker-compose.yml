@@ -1,0 +1,135 @@
+# Full-stack demo: Laravel + PostgreSQL + Redis + a queue worker + the two
+# GraphRAG microservices.
+#
+# Before first run:
+#   1. bash scripts/fetch-artifacts.sh        (downloads graph + model weights)
+#   2. export APP_KEY="$(php artisan key:generate --show)"
+#   3. docker compose up --build
+
+# Shared environment for the laravel (web) and worker (queue) containers — they
+# run the same image and must agree on DB, Redis, and the AI service targets.
+x-laravel-env: &laravel-env
+  APP_KEY: "${APP_KEY:?APP_KEY is required — generate one with: php artisan key:generate --show}"
+  APP_ENV: local
+  APP_DEBUG: "true"
+  # The Dockerized app is reached at localhost:8000; make that origin stateful
+  # so cookie-based SPA login/register work in the browser.
+  APP_URL: http://localhost:8000
+  SANCTUM_STATEFUL_DOMAINS: localhost:8000,127.0.0.1:8000
+  DB_CONNECTION: pgsql
+  DB_HOST: postgres
+  DB_PORT: "5432"
+  DB_DATABASE: graphrag_app
+  DB_USERNAME: graphrag
+  DB_PASSWORD: secret
+  SESSION_DRIVER: database
+  CACHE_STORE: database
+  QUEUE_CONNECTION: database
+  # Redis backs the streaming side channel (chunk lists drained by the SSE
+  # endpoint). predis = pure PHP, so no phpredis extension is needed.
+  REDIS_CLIENT: predis
+  REDIS_HOST: redis
+  REDIS_PORT: "6379"
+  AI_GENERATOR: grpc
+  # CPU generation can exceed 30s on a cold model — give the services headroom.
+  AI_TIMEOUT: "60"
+  # gRPC targets (host:port, no scheme) — the services speak gRPC/HTTP2.
+  AI_RETRIEVAL_URL: retrieval:8001
+  AI_GENERATION_URL: generation:8002
+
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: graphrag_app
+      POSTGRES_USER: graphrag
+      POSTGRES_PASSWORD: secret
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U graphrag -d graphrag_app"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  retrieval:
+    build: services/retrieval
+    volumes:
+      - ./artifacts/graph:/data:ro
+    ports:
+      - "8001:8001"
+
+  generation:
+    build: services/generation
+    environment:
+      # Point GENERATION_MODEL_PATH at a Hugging Face hub id (e.g.
+      # google/flan-t5-small) to serve a stand-in model without the mounted
+      # checkpoint; set GENERATION_MODEL_NAME to match so responses report
+      # the model actually served, and GENERATION_PROMPT_STYLE to "qa" for
+      # instruction-tuned stand-ins ("clue" is the notebook-faithful template
+      # for the fine-tuned BART checkpoint).
+      MODEL_PATH: ${GENERATION_MODEL_PATH:-/models/bart_jeopardy_final}
+      MODEL_NAME: ${GENERATION_MODEL_NAME:-bart-jeopardy-final}
+      PROMPT_STYLE: ${GENERATION_PROMPT_STYLE:-clue}
+    volumes:
+      - ./artifacts/models/bart_jeopardy_final:/models/bart_jeopardy_final:ro
+      - hf-cache:/root/.cache/huggingface
+    ports:
+      - "8002:8002"
+
+  laravel:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      <<: *laravel-env
+      # Multiple built-in-server workers so a long-lived SSE connection does not
+      # starve other requests (dev-server limitation).
+      PHP_CLI_SERVER_WORKERS: "6"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      retrieval:
+        condition: service_healthy
+      generation:
+        condition: service_healthy
+    # --no-reload is required for PHP_CLI_SERVER_WORKERS to spawn multiple
+    # workers; without it the built-in server is single-threaded and a long-lived
+    # SSE stream would block every other request. Seed the news once after
+    # migrate (best-effort) so the dashboard has data before the hourly schedule.
+    command: sh -c "php artisan migrate --force && (php artisan news:scrape || true) && php artisan serve --host=0.0.0.0 --port=8000 --no-reload"
+
+  worker:
+    build: .
+    environment:
+      <<: *laravel-env
+    # The image's HTTP healthcheck probes :8000, which the worker doesn't serve.
+    healthcheck:
+      disable: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      retrieval:
+        condition: service_healthy
+      generation:
+        condition: service_healthy
+    # Processes StreamChatReply (retrieve + stream generation over gRPC, push
+    # chunks to Redis) and runs the scheduler (hourly news:scrape) in the
+    # background. --timeout must exceed the job's own 180s timeout.
+    command: sh -c "(php artisan schedule:work &) ; php artisan queue:work --tries=1 --timeout=190"
+
+volumes:
+  pgdata:
+  hf-cache:

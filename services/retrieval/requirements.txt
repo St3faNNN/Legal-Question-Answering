@@ -1,0 +1,12 @@
+grpcio==1.62.2
+grpcio-health-checking==1.62.2
+protobuf==4.25.8
+networkx==3.3
+spacy==3.7.5
+# spacy imports its CLI (typer/click) at package import; click used to arrive
+# transitively via uvicorn[standard], which the gRPC conversion removed. Pin it
+# explicitly so a clean image has it.
+click==8.1.8
+en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.7.1/en_core_web_sm-3.7.1-py3-none-any.whl
+numpy==1.26.4
+pytest==8.3.4
