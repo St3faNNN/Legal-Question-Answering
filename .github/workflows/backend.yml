@@ -37,6 +37,9 @@ jobs:
           npm run build
 
       - name: Run tests
+        env:
+          APP_URL: http://localhost
+          SANCTUM_STATEFUL_DOMAINS: localhost
         run: |
           php artisan config:clear
           php artisan test
