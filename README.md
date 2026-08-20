@@ -1,58 +1,307 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+# GraphRAG for Macedonian Legislation
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+A question-answering platform over a corpus of Macedonian law. You ask a question
+in Macedonian; the system retrieves the relevant **statutory provisions**, cites
+them, and presents a short generated summary as a clearly subordinate aid.
 
-## About Laravel
+The product framing is deliberate and load-bearing. The primary output is the
+list of cited articles — the tool is built for legal practitioners who read the
+provisions themselves. The generated prose sits underneath that list, styled and
+labelled as secondary, so it is never mistaken for the answer. **This is not a
+legal-advice tool**, and the UI is designed to keep that obvious: it surfaces
+sources first and the model's words second.
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+> The bundled legal documents (terms, privacy notice) are **drafts pending
+> professional review**, not finished legal instruments.
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+---
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
+## What it is, concretely
 
-## Learning Laravel
+The corpus is **10 Macedonian laws** — public procurement, labour relations,
+personal-data protection, free access to public information, general
+administrative procedure, administrative servants, public-sector employees,
+copyright, publishing, and culture — parsed into **1,831 text chunks** and a
+**citation graph of 1,410 articles joined by 945 cross-references**.
 
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework.
+Retrieval is hybrid and the graph is real, but the "GraphRAG" label deserves a
+caveat up front (see [Retrieval](#retrieval)): the graph edges are **explicit
+statutory cross-references parsed from the text** ("as defined in Article 96…"),
+not LLM-extracted entity relationships. It is a citation graph, not a knowledge
+graph.
 
-In addition, [Laracasts](https://laracasts.com) contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
+---
 
-You can also watch bite-sized lessons with real-world projects on [Laravel Learn](https://laravel.com/learn), where you will be guided through building a Laravel application from scratch while learning PHP fundamentals.
+## Architecture
 
-## Agentic Development
-
-Laravel's predictable structure and conventions make it ideal for AI coding agents like Claude Code, Cursor, and GitHub Copilot. Install [Laravel Boost](https://laravel.com/docs/ai) to supercharge your AI workflow:
-
-```bash
-composer require laravel/boost --dev
-
-php artisan boost:install
+```mermaid
+flowchart LR
+    B[Vue SPA] -->|JSON / SSE| L[Laravel API]
+    L <--> PG[(Postgres)]
+    L <--> R[(Redis)]
+    L -.dispatch.-> W[Queue worker]
+    W -->|gRPC| RET["Retrieval service<br/>(Python, BGE-M3)"]
+    W -->|OpenAI-compatible HTTP| GEN["Hosted LLM<br/>(Gemini by default)"]
+    W -->|writes chunks| R
+    RET --> VEC[(vectors.sqlite)]
+    RET --> GRAPH[(graph.graphml)]
 ```
 
-Boost provides your agent 15+ tools and skills that help agents build Laravel applications while following best practices.
+- **Laravel API + Vue SPA** — the web tier. Sanctum cookie sessions, Postgres for
+  data and the queue, Redis for the streaming side-channel.
+- **Queue worker** — runs the one long job, `StreamChatReply`, off the request
+  thread.
+- **Retrieval service** — a standalone **Python gRPC** service holding BGE-M3, the
+  vector matrix, and the citation graph in memory. Deployed on the same host as
+  the app to save cost; splitting it onto its own box is an env change
+  (`AI_RETRIEVAL_URL`), not a rewrite.
+- **Generation** — by default a **hosted OpenAI-compatible endpoint** (Gemini's
+  compatibility layer). An **opt-in local llama.cpp service** is kept as an
+  offline / rate-limited fallback behind a Compose profile.
 
-## Contributing
+### The request lifecycle, and why it's shaped this way
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+A streamed answer is not a single request/response. Generation takes seconds and
+can fail mid-flight, so the browser gets an immediate handle and subscribes to a
+separate event stream.
 
-## Code of Conduct
+```mermaid
+sequenceDiagram
+    participant Browser
+    participant API as Laravel API
+    participant Q as Worker
+    participant RET as Retrieval (gRPC)
+    participant GEN as Hosted LLM
+    participant R as Redis
 
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
+    Browser->>API: POST /chat/stream
+    API-->>Browser: 202 { stream_id }
+    API->>Q: dispatch StreamChatReply
+    Browser->>API: GET /chat/stream/{id}  (SSE, cookie auth)
+    Q->>RET: Retrieve(question)
+    RET-->>Q: cited provisions + context
+    Q->>GEN: stream completion
+    loop each token
+        GEN-->>Q: token
+        Q->>R: RPUSH chunk
+    end
+    API->>R: BLPOP (relay)
+    R-->>API: chunk
+    API-->>Browser: SSE: chunk / done
+```
 
-## Security Vulnerabilities
+1. `POST /api/v1/chat/stream` persists the user message, dispatches the job, and
+   returns **`202` with a `stream_id`** — it does not wait for the answer.
+2. The worker calls retrieval over gRPC, then streams generation, **`RPUSH`-ing
+   each token onto a Redis list** keyed by the stream id.
+3. The browser opens an **SSE** connection to `GET /api/v1/chat/stream/{id}`. The
+   relay `BLPOP`s that list and forwards `status` / `chunk` / `done` / `error`
+   events.
 
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
+A **Redis list**, not pub/sub, is what buffers tokens produced before the browser
+finishes connecting — pub/sub would drop them.
 
-## License
+**Why SSE forced cookie sessions over JWT.** The stream is delivered with
+`EventSource`, and `EventSource` cannot set an `Authorization` header — it sends
+only cookies. So the streaming endpoint authenticates on the **same-origin Sanctum
+session cookie**, and the whole SPA follows suit rather than splitting auth across
+two schemes. Bearer tokens still exist for programmatic API access; the browser
+path is cookie-based because the transport left no choice.
 
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+The relay also carries two independent silence budgets — a generous **first-token**
+window (retrieval + prefill) and a tight **between-token** window — so a worker
+that dies without running its failure hook (a `SIGKILL`, an OOM, a deploy
+mid-answer) surfaces a clean error in seconds instead of hanging the browser.
+
+---
+
+## Retrieval
+
+Each question runs through a hybrid pipeline:
+
+```mermaid
+flowchart LR
+    Q[Question] --> E[BGE-M3 encode]
+    E --> D[Dense search]
+    E --> S[Sparse / lexical search]
+    D --> F1[RRF fuse]
+    S --> F1
+    F1 --> G["Graph expansion<br/>(follow cross-references)"]
+    F1 --> F2["RRF fuse<br/>vector + graph"]
+    G --> F2
+    F2 --> TOP[Top-N provisions in RRF order]
+```
+
+- **BGE-M3** produces both a dense vector and lexical-sparse weights from one
+  pass; dense and sparse searches run over `vectors.sqlite` (1,831 chunks).
+- **Reciprocal Rank Fusion** merges the rankings — chosen over a weighted score
+  sum because the signals aren't on a shared scale (cosine, unbounded lexical dot
+  products, and a graph with no similarity score at all). Rank position is the one
+  thing they agree on.
+- **Graph expansion** takes the strongest hits and pulls in the articles they
+  cross-reference, so a provision that only *cites* the match still competes.
+- The fused top-N is returned **in RRF order**.
+
+**On the word "GraphRAG."** The graph is genuine and it does real work — but its
+edges are explicit statutory cross-references parsed from the legislation, not
+relationships an LLM inferred. If you know the term, calibrate accordingly: this
+is retrieval augmented by a **citation graph**, not by an extracted knowledge
+graph.
+
+---
+
+## The evaluation harness
+
+The part most RAG demos skip, and the reason every decision below has a number.
+
+`tests/eval/questions.yaml` is a **29-question set authored by a lawyer**, each
+with the expected source article(s) and expected answer. `scripts/eval_retrieval.py`
+runs them against the live retrieval service and scores **recall@k with zero LLM
+calls** — it never touches generation, so it costs no API quota and isolates
+retrieval quality from the model's phrasing.
+
+Five of the 29 questions (≈17%) are marked `expected_refusal: true`: their answers
+are agency guidance or interpretation, **not present in the statute**. The correct
+behaviour there is to refuse, so a fluent answer is a failure, not a success.
+
+Because the retrieval service is deterministic, a run is reproducible and two runs
+`compare` cleanly. That is what made the reranker decision below an experiment
+rather than an opinion.
+
+---
+
+## Engineering decisions, with numbers
+
+Every figure here comes from a run in `tests/eval/results/`, `docker stats`, or a
+service log — see [Verification](#verification-notes) for which is which.
+
+### Generation moved off-box to a hosted API
+
+Local Qwen on CPU via llama.cpp is **prefill-bound at ~90s** (the context, not the
+answer length, dominates), and answered end-to-end in minutes. Moving generation
+to a hosted OpenAI-compatible endpoint took a full answer to **a few seconds**
+(≈180s → ≈6s end to end). The local service is retained behind a Compose profile
+for offline / rate-limited use. Swapping between them is a driver config change;
+the `ChatService` and controllers never move.
+
+### The cross-encoder reranker was removed
+
+A bge-reranker-v2-m3 cross-encoder used to re-score the fused pool. Measurement
+retired it. On the 29-question set (same run for both):
+
+| | Reranker (pool 16 → top 6) | No reranker (pool 24 → top 16) |
+|---|---|---|
+| recall of the returned set | 0.77 | **0.81** (recall@16) |
+| recall at an equal top-6 window | 0.77 | 0.60 |
+| per-query latency (median) | **4.4 s** | **0.14 s** |
+| retrieval RAM | 4.00 GiB | **2.96 GiB** |
+
+The cross-encoder *does* order a short list better (0.77 vs 0.60 at top-6). But it
+was only **reordering provisions already inside the RRF top-16** — returning that
+top-16 directly scores 0.81, higher than the reranked six. Since the product shows
+a scannable list of provisions (not a single best answer), that reordering bought
+the user nothing, while costing ~30× latency and ~1 GiB of resident memory. So it
+came out. `torch` and `onnx` backends are kept behind a flag for the eval harness
+to switch back and compare.
+
+### The result: a footprint that fits a 4 GB box
+
+The whole stack now runs in **3.17 GiB** (`docker stats`, warm). Two moves got it
+there: making local generation opt-in removed a **~2 GiB** GGUF from the default
+deployment, and dropping the reranker freed **~1 GiB**. Warm retrieval is
+**~0.1–0.3 s**; `rerank=0` on every query, and BGE-M3 encoding (~0.28 s cold on
+the first pass) is now the entire cost.
+
+---
+
+## What doesn't work
+
+A list of only wins is less trustworthy than one that names the edges.
+
+- **Retrieval has genuine misses.** On the current eval set, four questions
+  retrieve *none* of their expected articles even in the top 16 (Q2, Q9, Q11,
+  Q26). Two are documented in the question file as clean retrieval gaps — a
+  vocabulary mismatch (Q2), and a provision that never appears in 40 candidates
+  (Q9). These are **chunking / embedding** failures, not ranking ones: a better
+  window can't fix an article that never surfaces.
+- **Part of the corpus genuinely can't answer part of the questions.** ~17% of the
+  set asks for agency guidance rather than statute. Correct behaviour is refusal,
+  and that is what the eval expects.
+- **The abstention signal was lost with the reranker.** The old rerank score was a
+  clean confidence signal — unanswerable questions scored far below answerable
+  ones, so the system could refuse *without* calling the LLM. RRF fused scores do
+  **not** carry that information: they are rank-derived and bounded, and on the
+  eval set the unanswerable questions' top-1 scores fall entirely inside the
+  answerable range (several at the exact single-signal floor). Refusal now rests on
+  the **system prompt alone**. This was a real capability, and it is gone; the
+  cheapest candidate to restore it (thresholding the raw dense cosine the pipeline
+  currently discards) is unproven.
+- **Retrieval is a separate service on the same host.** That is a cost decision,
+  not an architectural limit — moving it to its own instance is a change to
+  `AI_RETRIEVAL_URL`, nothing more.
+
+---
+
+## Running it
+
+Requires Docker and (for the hosted generation path) a Gemini API key.
+
+**First-time setup**
+
+```bash
+bash scripts/fetch-artifacts.sh                          # verify graph + vector artifacts
+export APP_KEY="$(php artisan key:generate --show)"      # required by compose
+# Point at hosted generation (default, recommended):
+#   in your environment or .env:  AI_DRIVER=openai_compatible  LLM_API_KEY=<key>
+docker compose up -d
+```
+
+**Mint an invite code** (open signup is deliberately closed — this is the only way
+to register):
+
+```bash
+docker compose exec laravel php artisan invitations:create --note "reviewer"
+```
+
+Register in the SPA with that code, then log in.
+
+**Offline / fallback generation** (local llama.cpp instead of the hosted API):
+
+```bash
+docker compose --profile local-llm up -d    # starts the generation service
+# and set AI_DRIVER=grpc
+```
+
+**Tests**
+
+```bash
+composer test                                            # Laravel: feature + unit (Pest)
+# Python services (torch CPU wheel + requirements, then pytest):
+cd services/retrieval && python -m pytest tests -q
+cd services/generation && python -m pytest tests -q
+```
+
+**The two harnesses**
+
+```bash
+# Retrieval quality — recall@k, no LLM calls, no API quota:
+./services/retrieval/.venv/Scripts/python.exe scripts/eval_retrieval.py run --label mine
+./services/retrieval/.venv/Scripts/python.exe scripts/eval_retrieval.py compare A.json B.json
+
+# Streaming reliability against the live stack (idempotency, retries, worker
+# death, first-chunk timeout):
+scripts/verify-reliability.sh
+```
+
+---
+
+## Verification notes
+
+Numbers in this README trace to: the two eval runs in `tests/eval/results/`
+(`*readme-reranked`, `*readme-none`) for recall and per-query latency; `docker
+stats --no-stream` for the 3.17 GiB stack and 2.96 GiB retrieval figures; the
+retrieval startup log for the 1,410-article / 945-cross-reference graph and 1,831
+chunks; and `vectors.sqlite` for the 10-law / 1,831-chunk corpus. The generation
+≈180s → ≈6s figure is the maintainer's end-to-end measurement across the migration
+(the ~90s local prefill floor is documented in `config/ai.php`); it was not
+re-timed here.
