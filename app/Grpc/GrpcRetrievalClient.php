@@ -27,7 +27,7 @@ class GrpcRetrievalClient implements RetrievalClient
 
     public function retrieve(string $question): array
     {
-        $request = (new RetrieveRequest())->setQuestion($question);
+        $request = (new RetrieveRequest)->setQuestion($question);
 
         /** @var array{0: ?RetrieveResponse, 1: object} $result */
         $result = $this->stub
@@ -52,6 +52,16 @@ class GrpcRetrievalClient implements RetrievalClient
                 ],
                 iterator_to_array($response->getTriples()),
             ),
+            'chunks' => array_map(
+                fn ($chunk): array => [
+                    'id' => $chunk->getId(),
+                    'text' => $chunk->getText(),
+                    'source' => $chunk->getSource(),
+                    'score' => $chunk->getScore(),
+                ],
+                iterator_to_array($response->getChunks()),
+            ),
+            'context_items' => $response->getContextItems(),
             'latency_ms' => $response->getLatencyMs(),
         ];
     }

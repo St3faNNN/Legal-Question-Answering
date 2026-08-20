@@ -18,6 +18,10 @@ trait ComposesGraphRagReply
 
     private const TOP_TRIPLES_LIMIT = 5;
 
+    private const TOP_CHUNKS_LIMIT = 5;
+
+    private const CHUNK_TEXT_LIMIT = 600;
+
     private const HISTORY_MESSAGE_LIMIT = 6;
 
     private const HISTORY_CONTENT_LIMIT = 500;
@@ -27,7 +31,7 @@ trait ComposesGraphRagReply
      * Retrieval output (entities, triple count, truncated context) is stored in
      * the message metadata so retrieval quality is inspectable per message.
      *
-     * @param  array{context?: string, entities?: list<string>, triples?: array<int, mixed>, latency_ms?: int|null}  $retrieval
+     * @param  array{context?: string, entities?: list<string>, triples?: array<int, mixed>, chunks?: array<int, mixed>, context_items?: int|null, latency_ms?: int|null}  $retrieval
      * @param  array{answer?: string, model?: string|null, tokens?: int|null, latency_ms?: int|null}  $generation
      * @return array{answer: string, model: ?string, tokens: ?int, latency_ms: ?int, metadata: array<string, mixed>}
      */
@@ -39,13 +43,16 @@ trait ComposesGraphRagReply
 
         return [
             'answer' => $generation['answer'],
-            'model' => $generation['model'] ?? 'bart-jeopardy-final',
+            'model' => $generation['model'] ?? 'qwen2.5-1.5b-instruct',
             'tokens' => $generation['tokens'] ?? null,
             'latency_ms' => (int) ((hrtime(true) - $startNs) / 1_000_000),
             'metadata' => [
                 'entities' => $retrieval['entities'] ?? [],
                 'triple_count' => count($retrieval['triples'] ?? []),
                 'top_triples' => $this->topTriples($retrieval['triples'] ?? []),
+                'chunk_count' => count($retrieval['chunks'] ?? []),
+                'top_chunks' => $this->topChunks($retrieval['chunks'] ?? []),
+                'context_items' => $retrieval['context_items'] ?? null,
                 'context' => Str::limit($retrieval['context'] ?? '', self::CONTEXT_METADATA_LIMIT),
                 'retrieval_latency_ms' => $retrieval['latency_ms'] ?? null,
                 'generation_latency_ms' => $generation['latency_ms'] ?? null,
@@ -71,6 +78,31 @@ trait ComposesGraphRagReply
                 'relation' => (string) ($triple['relation'] ?? ''),
                 'tail' => (string) ($triple['tail'] ?? ''),
                 'confidence' => isset($triple['confidence']) ? (float) $triple['confidence'] : null,
+            ])
+            ->values()
+            ->all();
+    }
+
+    /**
+     * The highest-ranked retrieved passages the answer was grounded in, capped
+     * at TOP_CHUNKS_LIMIT. Retrieval returns them in reranked order, so the
+     * leading slice is the "top" set surfaced in the UI. Passage text is
+     * truncated because the message metadata is a citation trail, not a second
+     * copy of the corpus.
+     *
+     * @param  array<int, mixed>  $chunks
+     * @return list<array{id: string, text: string, source: string, score: float|null}>
+     */
+    private function topChunks(array $chunks): array
+    {
+        return collect($chunks)
+            ->take(self::TOP_CHUNKS_LIMIT)
+            ->filter(fn ($chunk): bool => is_array($chunk))
+            ->map(fn (array $chunk): array => [
+                'id' => (string) ($chunk['id'] ?? ''),
+                'text' => Str::limit((string) ($chunk['text'] ?? ''), self::CHUNK_TEXT_LIMIT),
+                'source' => (string) ($chunk['source'] ?? ''),
+                'score' => isset($chunk['score']) ? (float) $chunk['score'] : null,
             ])
             ->values()
             ->all();

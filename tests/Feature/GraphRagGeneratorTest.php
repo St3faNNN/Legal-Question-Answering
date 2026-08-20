@@ -19,6 +19,10 @@ beforeEach(function (): void {
     ]);
 });
 
+/**
+ * These fixtures exercise the HTTP transport, not the corpus — the payload
+ * shape is what matters here, so the sample content is deliberately simple.
+ */
 function fakeRetrievalSuccess(): array
 {
     return [
@@ -28,6 +32,10 @@ function fakeRetrievalSuccess(): array
             ['head' => 'albert einstein', 'relation' => 'developed', 'tail' => 'theory of relativity', 'confidence' => 0.95],
             ['head' => 'albert einstein', 'relation' => 'born_in', 'tail' => 'ulm', 'confidence' => 0.9],
         ],
+        'chunks' => [
+            ['id' => '1', 'text' => 'Albert Einstein was a theoretical physicist.', 'source' => 'Einstein, p. 1', 'score' => 7.5],
+        ],
+        'context_items' => 1,
         'latency_ms' => 12,
     ];
 }
@@ -36,7 +44,7 @@ function fakeGenerationSuccess(): array
 {
     return [
         'answer' => 'This physicist developed the theory of relativity.',
-        'model' => 'bart-jeopardy-final',
+        'model' => 'qwen2.5-1.5b-instruct',
         'tokens' => 14,
         'latency_ms' => 850,
     ];
@@ -63,7 +71,7 @@ describe('GraphRAG chat flow', function (): void {
 
         expect($response->json('message.role'))->toBe('assistant')
             ->and($response->json('message.content'))->toBe('This physicist developed the theory of relativity.')
-            ->and($response->json('message.model'))->toBe('bart-jeopardy-final')
+            ->and($response->json('message.model'))->toBe('qwen2.5-1.5b-instruct')
             ->and($response->json('message.tokens'))->toBe(14);
 
         $assistantMessage = $user->conversations()->first()->messages()->where('role', 'assistant')->first();
@@ -75,6 +83,11 @@ describe('GraphRAG chat flow', function (): void {
                 ['head' => 'albert einstein', 'relation' => 'born_in', 'tail' => 'ulm', 'confidence' => 0.9],
             ])
             ->and($assistantMessage->metadata['context'])->toContain('albert einstein developed theory of relativity')
+            ->and($assistantMessage->metadata['chunk_count'])->toBe(1)
+            ->and($assistantMessage->metadata['top_chunks'])->toBe([
+                ['id' => '1', 'text' => 'Albert Einstein was a theoretical physicist.', 'source' => 'Einstein, p. 1', 'score' => 7.5],
+            ])
+            ->and($assistantMessage->metadata['context_items'])->toBe(1)
             ->and($assistantMessage->metadata['retrieval_latency_ms'])->toBe(12)
             ->and($assistantMessage->metadata['generation_latency_ms'])->toBe(850);
 

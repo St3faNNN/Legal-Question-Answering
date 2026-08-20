@@ -8,7 +8,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
-#[Fillable(['role', 'content', 'model', 'latency_ms', 'tokens', 'metadata'])]
+#[Fillable(['role', 'content', 'model', 'latency_ms', 'tokens', 'metadata', 'stream_id'])]
 class Message extends Model
 {
     /** @use HasFactory<MessageFactory> */

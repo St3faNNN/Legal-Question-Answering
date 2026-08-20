@@ -21,6 +21,8 @@ export interface RegisterPayload {
     email: string
     password: string
     password_confirmation: string
+    invite_code: string
+    accept_terms: boolean
 }
 
 export const authApi = {
@@ -46,6 +48,17 @@ export const authApi = {
     async updateProfile(payload: { name?: string; bio?: string | null }) {
         const { data } = await client.patch<{ data: User }>('/profile', payload)
         return data.data
+    },
+
+    // Download all data the system holds about the user, as a JSON blob.
+    async exportData(): Promise<Blob> {
+        const { data } = await client.get('/account/export', { responseType: 'blob' })
+        return data as Blob
+    },
+
+    // Permanently delete the account, confirmed with the current password.
+    async deleteAccount(password: string) {
+        await client.delete('/account', { data: { password } })
     },
 }
 
@@ -103,13 +116,31 @@ export interface GraphTriple {
     confidence: number | null
 }
 
+export interface RetrievedChunk {
+    id: string
+    text: string
+    source: string
+    score: number | null
+}
+
 export interface MessageMetadata {
     entities?: string[]
     triple_count?: number
     top_triples?: GraphTriple[]
+    chunk_count?: number
+    top_chunks?: RetrievedChunk[]
+    context_items?: number | null
     context?: string
     retrieval_latency_ms?: number | null
     generation_latency_ms?: number | null
+    /** End-to-end: received query -> final generated word (ms). */
+    total_latency_ms?: number | null
+    /** Request received -> first token (ms). Governs perceived speed. */
+    ttft_ms?: number | null
+    /** Retrieval call start -> context assembled (ms). */
+    retrieval_ms?: number | null
+    /** Request received -> final token (ms); alias of total_latency_ms. */
+    total_ms?: number | null
     [key: string]: unknown
 }
 

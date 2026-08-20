@@ -84,8 +84,9 @@ class ChatController extends Controller
      * Stream reply events (SSE)
      *
      * Server-Sent Events relay: drains the stream's Redis list and forwards
-     * `chunk`, `done`, and `error` events to the browser. Authenticated via the
-     * same-origin session cookie (EventSource cannot send bearer headers).
+     * `status`, `chunk`, `done`, and `error` events to the browser.
+     * Authenticated via the same-origin session cookie (EventSource cannot send
+     * bearer headers).
      *
      * @group Chat
      *
@@ -98,34 +99,64 @@ class ChatController extends Controller
 
         $key = StreamChatReply::channelKey($streamId);
 
-        return response()->stream(function () use ($key): void {
+        // Two silence budgets: the first token can be many seconds away
+        // (retrieval, then generation prefill), but once tokens flow they arrive
+        // ~10/s, so a mid-stream stall must be caught far sooner. Both are a
+        // backstop — a clean job failure publishes its own terminal error via
+        // StreamChatReply::failed(); these only fire when the worker died
+        // without saying so (SIGKILL/OOM).
+        $firstChunkTimeout = (float) $this->firstChunkTimeout();
+        $betweenChunkTimeout = (float) config('ai.stream.between_chunk_timeout');
+        $pollSeconds = max(1, (int) config('ai.stream.poll_seconds'));
+
+        return response()->stream(function () use ($key, $firstChunkTimeout, $betweenChunkTimeout, $pollSeconds): void {
             $redis = Redis::connection();
-            $idleLoops = 0;
+            $seenChunk = false;
+            $lastEventAt = microtime(true);
 
             while (! connection_aborted()) {
-                // Block up to 15s for the next event; a Redis list buffers
-                // chunks produced before the browser connected (pub/sub would
-                // drop them).
-                $item = $redis->blpop([$key], 15);
+                // Block for the next event; a Redis list buffers chunks
+                // produced before the browser connected (pub/sub would drop
+                // them).
+                $item = $redis->blpop([$key], $pollSeconds);
 
                 if ($item === null) {
+                    // Emit a keepalive (which also gives connection_aborted() a
+                    // write to notice a gone client), then give up if the
+                    // tolerated silence has elapsed — a stalled first token and a
+                    // stalled mid-stream have very different budgets.
                     echo ": keepalive\n\n";
                     $this->flushOutput();
 
-                    if (++$idleLoops >= 8) {
-                        break; // ~2 min with no events — give up
+                    $budget = $seenChunk ? $betweenChunkTimeout : $firstChunkTimeout;
+
+                    if ((microtime(true) - $lastEventAt) >= $budget) {
+                        $this->emitError(
+                            $seenChunk ? 'stalled' : 'timeout',
+                            $seenChunk
+                                ? 'The assistant stopped responding. Please try again.'
+                                : 'The assistant took too long to respond. Please try again.',
+                        );
+
+                        break;
                     }
 
                     continue;
                 }
 
-                $idleLoops = 0;
+                $lastEventAt = microtime(true);
                 $payload = $item[1];
                 echo "data: {$payload}\n\n";
                 $this->flushOutput();
 
                 $event = json_decode($payload, true);
-                if (in_array($event['type'] ?? '', ['done', 'error'], true)) {
+                $type = $event['type'] ?? '';
+
+                if ($type === 'chunk') {
+                    $seenChunk = true;
+                }
+
+                if (in_array($type, ['done', 'error'], true)) {
                     break;
                 }
             }
@@ -135,6 +166,39 @@ class ChatController extends Controller
             'Connection' => 'keep-alive',
             'X-Accel-Buffering' => 'no',
         ]);
+    }
+
+    /**
+     * Silence budget before the first token, derived from the active generation
+     * driver unless pinned. The hosted path reaches the first token in seconds
+     * (retrieval + a short prefill); the opt-in local-llm fallback adds ~90s of
+     * llama.cpp prefill, so it needs a far larger window. Deriving keeps a
+     * routine restart or deploy from stranding a hosted client for the
+     * grpc-sized window — the failure a user actually hits, since neither a kill
+     * nor a stop fires the job's failed() hook.
+     */
+    private function firstChunkTimeout(): int
+    {
+        $override = config('ai.stream.first_chunk_timeout');
+
+        if ($override !== null) {
+            return (int) $override;
+        }
+
+        return config('ai.generator') === 'grpc'
+            ? (int) config('ai.stream.first_chunk_timeout_grpc')
+            : (int) config('ai.stream.first_chunk_timeout_hosted');
+    }
+
+    /**
+     * Push a terminal SSE `error` event so the browser's stream handler rejects
+     * with a real message, rather than hanging or seeing a bare disconnect it
+     * would surface as a generic "connection lost".
+     */
+    private function emitError(string $reason, string $message): void
+    {
+        echo 'data: '.json_encode(['type' => 'error', 'reason' => $reason, 'message' => $message])."\n\n";
+        $this->flushOutput();
     }
 
     private function flushOutput(): void

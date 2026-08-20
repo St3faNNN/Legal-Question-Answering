@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Api\V1\Auth\AccountController;
 use App\Http\Controllers\Api\V1\Auth\ApiTokenController;
 use App\Http\Controllers\Api\V1\Auth\AuthController;
 use App\Http\Controllers\Api\V1\Auth\ProfileController;
@@ -26,6 +27,12 @@ Route::prefix('v1')->group(function (): void {
     // Current user + profile
     Route::get('/user', [AuthController::class, 'show'])->middleware('auth:sanctum');
     Route::patch('/profile', [ProfileController::class, 'update'])->middleware('auth:sanctum');
+
+    // Data-subject rights: export own data, delete own account.
+    Route::middleware('auth:sanctum')->group(function (): void {
+        Route::get('/account/export', [AccountController::class, 'export']);
+        Route::delete('/account', [AccountController::class, 'destroy']);
+    });
 
     // API tokens - programmatic access
     Route::middleware('auth:sanctum')->group(function (): void {

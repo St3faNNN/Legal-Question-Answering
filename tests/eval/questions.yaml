@@ -1,0 +1,230 @@
+# Lawyer-authored evaluation set for the retrieval service.
+#
+# Each entry:
+# id                 stable integer identifier (used for resume + compare)
+# question           the Macedonian legal question, as asked
+# expected_answer    the lawyer's expected answer (free text)
+# expected_articles  OPTIONAL list of expected source article citations, e.g.
+#                    ["ZAKON-ZA-JAVNITE, чл. 132"]
+#                    Empty list = the corpus does not contain the answer.
+#                    See `expected_refusal` below.
+# expected_refusal   true when the answer is Agency guidance / interpretation
+#                    rather than statutory text. The correct system behaviour
+#                    is "Информацијата не е достапна во изворите"; a fluent
+#                    answer here is a hallucination, not a success.
+# confidence         low = verify this row against the corpus before trusting
+#                    any score that depends on it.
+
+- id: 1
+  question: "Дали вработен со средна стручна спрема може да биде лице за јавни набавки?"
+  expected_answer: "Не. Може само да извршува помошни работи."
+  expected_articles:
+    - "ZAKON-ZA-JAVNITE, чл. 80"
+
+- id: 2
+  question: "Дали е дозволено како надворешно стручно лице да се ангажира лице кое поседува потврда за положен испит за јавни набавки, кое е вработено во друг договорен орган?"
+  expected_answer: "Лицето за јавни набавки вработено кај друг договорен орган може да учествува во работата на комисијата за јавна набавка како надворешно стручно лице, но не е член на комисијата, туку помага при евалуацијата на понудите и нема право да одлучува."
+  expected_articles:
+    - "ZAKON-ZA-JAVNITE, чл. 77"
+  # KNOWN MISS: чл. 77 ст.(2) mentions "ангажирање надворешни стручни лица" but
+  # did not appear in 40 candidates. Retrieved at rank 1 for Q3. Vocabulary
+  # mismatch, not a reranking failure.
+
+- id: 3
+  question: "Дали договорниот орган може да ја измени одлуката и да дообезбеди средства потребни за реализација на договорот?"
+  expected_answer: "Да, ако најповолната понуда е повисока од обезбедените средства и по спроведена анализа се утврди дека тоа е економски поисплатливо од повторување на постапката, а понудената цена не го надминува вредносниот праг за видот на постапката."
+  expected_articles:
+    - "ZAKON-ZA-JAVNITE, чл. 77"
+
+- id: 4
+  question: "Што се смета за валиден доказ со кој субјектот на економскиот оператор му ги стави на располагање соодветните ресурси?"
+  expected_answer: "Договорниот орган во тендерската документација го дефинира документот што ќе го смета за валиден доказ, како договор за деловно-техничка соработка, изјава заверена на надлежен орган и слично."
+  expected_articles:
+    - "ZAKON-ZA-JAVNITE, чл. 96"
+  # Retrieved at rank 7 with RERANK_TOP_N=6 — scored by the cross-encoder, then
+  # discarded by the cut. Evidence for raising RERANK_TOP_N.
+
+- id: 5
+  question: "Кога економскиот оператор користи способност на друг субјект за исполнување на условите за квалитативен избор, што проверува договорниот орган?"
+  expected_answer: "Договорниот орган проверува дали субјектот ги исполнува потребните услови за квалитативен избор и дали постојат причини за негово исклучување, при што се проверува само способноста што е релевантна за конкретната постапка."
+  expected_articles:
+    - "ZAKON-ZA-JAVNITE, чл. 96"
+    - "ZAKON-ZA-JAVNITE, чл. 87"
+
+- id: 6
+  question: "Дали економски оператор може да ја користи способноста на друг субјект во врска со образовните и стручните квалификации или релевантно стручно искуство?"
+  expected_answer: "Да, но само ако другиот субјект ќе ги изведува работите или ќе ги обезбедува услугите за кои се бара таквата способност."
+  expected_articles:
+    - "ZAKON-ZA-JAVNITE, чл. 96"
+
+- id: 7
+  question: "Дали во текот на реализација на договорот може да се исправат слабости во техничката документација која била дел од тендерската документација?"
+  expected_answer: "Не. Во фазата на реализација не е дозволено менување на условите; договорот мора да се извршува согласно тендерската документација и избраната најповолна понуда."
+  expected_articles:
+    - "ZAKON-ZA-JAVNITE, чл. 119"
+  # Retrieved at rank 9. Same lesson as Q4.
+
+- id: 8
+  question: "Што треба да се стави на Листата на информации од јавен карактер?"
+  expected_answer: "Имателите на информации се должни редовно да ја водат и ажурираат листата со информации што ги создале или со кои располагаат и кои произлегуваат од нивните надлежности, согласно член 10 од ЗСПИЈК."
+  expected_articles:
+    - "ZAKON-ZA-SLOBODE, чл. 9"
+    - "ZAKON-ZA-SLOBODE, чл. 10"
+  confidence: low
+  # чл. 9 is the "Листа на информации" article; the lawyer's answer cites чл. 10
+  # (Посредување на информации). Confirm which is intended.
+
+- id: 9
+  question: "Како да се постапи по барања во кои се побарани голем број документи?"
+  expected_answer: "Ако поради обемноста е потребно повеќе време, рокот за одговор може да се продолжи од 20 на најмногу 30 дена, а барателот мора да биде известен најдоцна во рок од седум дена од приемот на барањето."
+  expected_articles:
+    - "ZAKON-ZA-SLOBODE, чл. 21"
+  confidence: low
+  # KNOWN MISS: the 20→30 day extension provision was not retrieved in 40
+  # candidates. чл. 21 (base 20-day rule) surfaced for Q10. Locate the exact
+  # article for the extension before trusting this row.
+
+- id: 10
+  question: "Дали треба по сите барања за пристап до информации од јавен карактер да се одговори со решение?"
+  expected_answer: "Да. Имателот на информации секогаш донесува управен акт – решение – без разлика дали барањето се прифаќа, одбива, отфрла, прекинува или запира."
+  expected_articles:
+    - "ZAKON-ZA-SLOBODE, чл. 20"
+
+- id: 11
+  question: "Кои информации во врска со јавните набавки треба да бидат достапни до јавноста?"
+  expected_answer: "До јавноста треба да биде достапна целокупната документација за јавните набавки."
+  expected_articles:
+    - "ZAKON-ZA-JAVNITE, чл. 30"
+    - "ZAKON-ZA-JAVNITE, чл. 6"
+
+- id: 12
+  question: "Како службените лица постапуваат по добиени непотполни, нејасни и неразбирливи барања?"
+  expected_answer: "Имателот бара дополнување, појаснување или прецизирање во рок од три дена, а ако барателот не постапи, се донесува решение за отфрлање на барањето."
+  expected_articles:
+    - "ZAKON-ZA-SLOBODE, чл. 17"
+
+- id: 13
+  question: "Дали е задолжително барањето за пристап до информации да биде доставено на образецот на Агенцијата?"
+  expected_answer: "Не. Барањето може да биде поднесено и на обичен поднесок ако ги содржи податоците предвидени со законот."
+  expected_articles:
+    - "ZAKON-ZA-SLOBODE, чл. 16"
+
+- id: 14
+  question: "Што значи обемна обработка на лични податоци?"
+  expected_answer: "Се оценува според бројот на субјекти, обемот на податоците, географскиот опфат и времетраењето на обработката; болниците се типичен пример за обемна обработка."
+  expected_articles: []
+  expected_refusal: true
+  # Agency/EDPB guidance. The statute uses "обемна обработка" (чл. 40, чл. 41)
+  # without defining the threshold.
+
+- id: 15
+  question: "Дали контролорот треба да спроведе проценка на влијанието и кога обработката е на листата што не бара таква проценка?"
+  expected_answer: "Не. Ако обработката е на листата на операции што не налагаат проценка, не се спроведува проценка, но мора да постои законски правен основ и соодветен исклучок за обработка на податоци за здравјето."
+  expected_articles:
+    - "ZAKON-ZA-ZASTITA, чл. 39"
+
+- id: 16
+  question: "Дали веб-страници кои не користат колачиња смеат да наведат дека не користат колачиња?"
+  expected_answer: "Техничките колачиња се секогаш активни и неопходни, а информациите за обработката преку колачиња може да бидат дадени во политиката или изјавата за приватност."
+  expected_articles: []
+  expected_refusal: true
+  # No cookie provisions in the corpus. Top-1 rerank score was -7.9.
+
+- id: 17
+  question: "Кој е правниот основ за обработка на лични податоци преку колачиња?"
+  expected_answer: "Согласноста е единствениот можен правен основ, освен за технички неопходните колачиња, и контролорот мора претходно да обезбеди јасни информации за субјектот."
+  expected_articles:
+    - "ZAKON-ZA-ZASTITA, чл. 10"
+    - "ZAKON-ZA-ZASTITA, чл. 11"
+  confidence: low
+  # Partial: the general legal-basis articles are correct, but the
+  # cookie-specific rule is Agency guidance, not statute.
+
+- id: 18
+  question: "Дали контролор кој не е должен да определи офицер за заштита на лични податоци може доброволно да назначи такво лице?"
+  expected_answer: "Да. Ако доброволно назначи офицер, тогаш се применуваат сите услови и обврски од законот како назначувањето да било задолжително."
+  expected_articles:
+    - "ZAKON-ZA-ZASTITA, чл. 41"
+
+- id: 19
+  question: "Дали обработката на податоци за вакцинален статус против КОВИД-19 се смета за обработка на посебна категорија лични податоци?"
+  expected_answer: "Да. Тоа се смета за обработка на податоци за здравјето, односно посебна категорија лични податоци."
+  expected_articles:
+    - "ZAKON-ZA-ZASTITA, чл. 13"
+
+- id: 20
+  question: "Дали физичко лице може да биде офицер за заштита на лични податоци на неколку различни контролори или обработувачи?"
+  expected_answer: "Да. Функцијата може да се врши врз основа на договор на дело со физичко лице или надворешна организација, под услов да се исполнуваат законските услови."
+  expected_articles:
+    - "ZAKON-ZA-ZASTITA, чл. 41"
+    - "ZAKON-ZA-ZASTITA, чл. 42"
+
+- id: 21
+  question: "Дали училиштето може да објавува фотографии на деца од организирани настани на својата веб-страница?"
+  expected_answer: "Да, врз основа на докажан легитимен интерес или согласност ако не постои друг правен основ."
+  expected_articles: []
+  expected_refusal: true
+  # The legitimate-interest basis exists (чл. 10), but the school/children
+  # application is Agency guidance. Top-1 rerank score was -4.8.
+
+- id: 22
+  question: "Дали училиштето може да објавува имиња на деца кои постигнале резултати на натпреварувања?"
+  expected_answer: "Да, врз основа на докажан легитимен интерес или согласност ако не постои друг правен основ."
+  expected_articles: []
+  expected_refusal: true
+  # As Q21. Top-1 rerank score was -5.8.
+
+- id: 23
+  question: "Во случај на ревизија, дали треба согласност од вработените или е доволно тие да бидат информирани?"
+  expected_answer: "Мора да постои соодветен правен основ; ако ревизијата се врши согласно закон, согласноста не е применлив правен основ."
+  expected_articles:
+    - "ZAKON-ZA-ZASTITA, чл. 32"
+  confidence: low
+  # Weak match — чл. 32 ст.(3)-(4) covers audits by the controller, not the
+  # consent question. May belong in the refusal set. Verify.
+
+- id: 24
+  question: "Дали работодавачот може да инсталира ГПС уред на службено возило?"
+  expected_answer: "Да, ако може да докаже постоење на легитимен интерес за таквата обработка на лични податоци."
+  expected_articles: []
+  expected_refusal: true
+  # No GPS/vehicle-tracking provision in the corpus. Top-1 rerank score -6.4.
+
+- id: 25
+  question: "Дали законот се применува и на јавно објавени лични податоци?"
+  expected_answer: "Да. Законот се применува без оглед дали податоците биле претходно јавно објавени, а контролорот мора да има правен основ и да ги обезбеди информациите предвидени со законот."
+  expected_articles:
+    - "ZAKON-ZA-ZASTITA, чл. 2"
+    - "ZAKON-ZA-ZASTITA, чл. 3"
+
+- id: 26
+  question: "Дали работодавачот треба да бара согласност од вработени кои го напуштаат работното место за чување на нивните лични податоци?"
+  expected_answer: "Не. Рокот за чување е утврден со Законот за работни односи и обработката се заснова на законска обврска."
+  expected_articles:
+    - "ZAKON-ZA-RABOTNI, чл. 44"
+    - "ZAKON-ZA-ZASTITA, чл. 85"
+  confidence: low
+  # The lawyer's answer cites a retention period set by the Labour Law. The
+  # specific retention-period article was not clearly retrieved — locate it.
+
+- id: 27
+  question: "Дали согласност дадена при вработување ги покрива договорот за вработување, телефонскиот број, електронската пошта, придонесите М1-М2 и слично?"
+  expected_answer: "Не."
+  expected_articles:
+    - "ZAKON-ZA-RABOTNI, чл. 13"
+    - "ZAKON-ZA-ZASTITA, чл. 11"
+
+- id: 28
+  question: "Кој дава согласност за дете?"
+  expected_answer: "Согласност дава родител или старател, освен за услуги на информатичкото општество понудени директно на детето, кога детето може да даде согласност ако има 14 или повеќе години."
+  expected_articles:
+    - "ZAKON-ZA-ZASTITA, чл. 12"
+
+- id: 29
+  question: "Дали контролорот мора да побара и добие согласност при обработка на лични податоци преку колачиња?"
+  expected_answer: "Да. Согласноста е единствениот можен правен основ, освен за технички неопходните колачиња, а контролорот мора да обезбеди и јавни информации согласно ЗЗЛП."
+  expected_articles:
+    - "ZAKON-ZA-ZASTITA, чл. 11"
+  confidence: low
+  # Partial, as Q17: general consent conditions are in чл. 11, but the
+  # cookie-specific rule is not statutory.

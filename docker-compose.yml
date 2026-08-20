@@ -1,10 +1,15 @@
-# Full-stack demo: Laravel + PostgreSQL + Redis + a queue worker + the two
-# GraphRAG microservices.
+# Full-stack demo: Laravel + PostgreSQL + Redis + a queue worker + the GraphRAG
+# retrieval microservice. Generation runs one of two ways:
+#   - default (hosted API): the OpenAI-compatible driver streams from a hosted
+#     endpoint. Set AI_DRIVER=openai_compatible + LLM_API_KEY. No local
+#     generation container is started, built, or pulled.
+#   - offline fallback: `docker compose --profile local-llm up -d` starts the
+#     local llama.cpp generation service; pair it with AI_DRIVER=grpc.
 #
 # Before first run:
-#   1. bash scripts/fetch-artifacts.sh        (downloads graph + model weights)
+#   1. bash scripts/fetch-artifacts.sh        (verifies graph + vector artifacts)
 #   2. export APP_KEY="$(php artisan key:generate --show)"
-#   3. docker compose up --build
+#   3. docker compose up -d                   (add --profile local-llm for offline)
 
 # Shared environment for the laravel (web) and worker (queue) containers — they
 # run the same image and must agree on DB, Redis, and the AI service targets.
@@ -25,21 +30,92 @@ x-laravel-env: &laravel-env
   SESSION_DRIVER: database
   CACHE_STORE: database
   QUEUE_CONNECTION: database
+  # The database queue re-reserves a job this many seconds after pickup, assuming
+  # a worker holding it that long has died. It MUST exceed the longest a job
+  # legitimately runs — the grpc fallback's job timeout, ~300s (StreamChatReply
+  # derives it from the per-call deadlines) — or a slow-but-live job is handed to
+  # a second worker and generated (and billed) twice. The 90s Laravel default is
+  # below the job timeout: safe only while --tries=1 forbids retries, and a trap
+  # the moment they are enabled. Invariant: retry_after > job timeout, with the
+  # worker --timeout sitting between them.
+  DB_QUEUE_RETRY_AFTER: "360"
   # Redis backs the streaming side channel (chunk lists drained by the SSE
   # endpoint). predis = pure PHP, so no phpredis extension is needed.
   REDIS_CLIENT: predis
   REDIS_HOST: redis
   REDIS_PORT: "6379"
-  AI_GENERATOR: grpc
-  # CPU generation can exceed 30s on a cold model — give the services headroom.
-  AI_TIMEOUT: "60"
+  # Which generation backend the app uses. The override knob is AI_DRIVER (not
+  # AI_GENERATOR) on purpose: AI_GENERATOR lives in .env as "placeholder" for
+  # local Herd, and reusing that name here would let it shadow this value.
+  #
+  # NOTE: this still defaults to "grpc", but the local generation service is now
+  # opt-in (profile "local-llm"), so a bare `docker compose up` must have
+  # AI_DRIVER set to match what is actually running:
+  #   - hosted API (default deploy): AI_DRIVER=openai_compatible + LLM_API_KEY,
+  #     and generation is neither started nor needed.
+  #   - offline fallback: `docker compose --profile local-llm up` AND AI_DRIVER=grpc.
+  # Left as grpc rather than flipped to openai_compatible so the offline path is
+  # not silently repointed; set AI_DRIVER (e.g. in .env) for the hosted path.
+  AI_GENERATOR: ${AI_DRIVER:-grpc}
+  # Per-call deadlines, split by service because they now live at very different
+  # speeds:
+  #   - AI_TIMEOUT bounds the gRPC GENERATION call, which is the opt-in local-llm
+  #     fallback only (llama.cpp on CPU: ~90s prefill + decode). Kept generous
+  #     and hardcoded so a stray .env AI_TIMEOUT cannot shadow it down and cut
+  #     that path off mid-answer. On the default hosted path generation uses
+  #     LLM_TIMEOUT below and this value is unused.
+  #   - AI_RETRIEVAL_TIMEOUT bounds the gRPC RETRIEVAL call (both drivers).
+  #     Retrieval is ~4-10s warm (~30s on the first cold inference after boot),
+  #     so 45s clears it with headroom yet surfaces a hang in under a minute.
+  # These per-call deadlines are the innermost timers: whichever fires first
+  # throws a clean AiServiceException. The job timeout (StreamChatReply, derived
+  # per driver) sits above them — ~90s hosted (45 + LLM_TIMEOUT 30 + margin),
+  # ~300s grpc (45 + AI_TIMEOUT 240 + margin). See the worker command for the
+  # full ordering against --timeout and retry_after.
+  AI_TIMEOUT: "240"
+  AI_RETRIEVAL_TIMEOUT: ${AI_RETRIEVAL_TIMEOUT:-45}
   # gRPC targets (host:port, no scheme) — the services speak gRPC/HTTP2.
   AI_RETRIEVAL_URL: retrieval:8001
   AI_GENERATION_URL: generation:8002
+  # OpenAI-compatible generation driver — only consulted when AI_GENERATOR is
+  # openai_compatible. Provider-neutral; defaults target Gemini's compat layer.
+  # The shared Macedonian prompt is mounted at /var/www/html/prompts (x-app-source),
+  # so config('ai.llm.prompt_path') resolves via base_path() with no override.
+  LLM_BASE_URL: ${LLM_BASE_URL:-https://generativelanguage.googleapis.com/v1beta/openai/}
+  LLM_API_KEY: ${LLM_API_KEY:-}
+  LLM_MODEL: ${LLM_MODEL:-gemini-flash-lite-latest}
+  LLM_MAX_TOKENS: ${LLM_MAX_TOKENS:-1024}
+  # Whole-request cap for the hosted stream (cURL CURLOPT_TIMEOUT). ~1-2s to
+  # first token and a full answer well under 30s, so 30s surfaces a stalled
+  # stream inside a minute without truncating a legitimate long reply.
+  LLM_TIMEOUT: ${LLM_TIMEOUT:-30}
+
+# The app source, mounted into the laravel and worker containers so a PHP or
+# built-asset change takes effect on restart rather than requiring a full image
+# rebuild. That rebuild recompiles the grpc PECL extension from source — roughly
+# an hour — and it cannot be avoided by editing carefully, because any new digest
+# of the php:8.4-cli base image invalidates the cached layer.
+#
+# vendor/, bootstrap/cache, and storage/ are deliberately NOT mounted: they are
+# produced by the image build (Composer deps, the optimized autoloader) and the
+# host has no equivalent. app/Grpc/Pb is generated — regenerate it on the host
+# with `bash scripts/gen-proto.sh --php` after changing a .proto, or the mount
+# will hide the image's copy with nothing.
+x-app-source: &app-source
+  - ./app:/var/www/html/app:ro
+  - ./config:/var/www/html/config:ro
+  - ./routes:/var/www/html/routes:ro
+  - ./database:/var/www/html/database:ro
+  - ./resources:/var/www/html/resources:ro
+  - ./public/build:/var/www/html/public/build:ro
+  # Shared Macedonian legal system prompt (also mounted into the generation
+  # service). Mounted rather than baked so an edit is a restart, not a rebuild.
+  - ./prompts:/var/www/html/prompts:ro
 
 services:
   postgres:
     image: postgres:17
+    restart: unless-stopped
     environment:
       POSTGRES_DB: graphrag_app
       POSTGRES_USER: graphrag
@@ -54,6 +130,7 @@ services:
 
   redis:
     image: redis:7-alpine
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -62,31 +139,112 @@ services:
 
   retrieval:
     build: services/retrieval
+    restart: unless-stopped
+    environment:
+      GRAPH_PATH: /data/graph.graphml
+      VECTOR_DB_PATH: /vectors/vectors.sqlite
+      EMBED_MODEL_PATH: ${EMBED_MODEL_PATH:-BAAI/bge-m3}
+      RERANKER_MODEL_PATH: ${RERANKER_MODEL_PATH:-BAAI/bge-reranker-v2-m3}
+      # Retrieval tuning. The cross-encoder reranker was removed (see config.py
+      # RERANK_BACKEND for the decision + measured trade), so there is no
+      # per-candidate scoring cost and these are nearly free to widen.
+      # RETRIEVAL_TOP_N passages are returned from a fused pool of CANDIDATE_POOL;
+      # keep CANDIDATE_POOL >= RETRIEVAL_TOP_N or the pool caps the result (the
+      # service warns at startup if it doesn't).
+      #
+      # RETRIEVAL_TOP_N was formerly RERANK_TOP_N; the old name stays a deprecated
+      # alias (honoured with a warning). Both are passed through so an existing
+      # .env setting either one keeps working — config.py resolves them (default
+      # 10). Must be <= CANDIDATE_POOL.
+      RETRIEVAL_TOP_N: ${RETRIEVAL_TOP_N:-}
+      RERANK_TOP_N: ${RERANK_TOP_N:-}
+      CONTEXT_CHAR_BUDGET: ${CONTEXT_CHAR_BUDGET:-12000}
+      # float32, deliberately: PyTorch has no fast CPU path for bfloat16 without
+      # AMX, and emulating it took a single query from seconds to over ten
+      # minutes. Only set bfloat16 on a GPU or an AMX-capable CPU.
+      MODEL_DTYPE: ${RETRIEVAL_MODEL_DTYPE:-float32}
+      # int8-quantize the embedder's Linear layers. The RAM saving is marginal —
+      # retrieval measured 5.14 GiB *with* int8, not the ~2 GB once claimed here.
+      # What int8 actually did was roughly halve the (now-removed) cross-encoder's
+      # forward pass on this AVX2-only CPU: a latency win, not the native int8
+      # GEMM it was described as (this CPU has AVX2 but no VNNI). With the reranker
+      # gone int8 only touches the embedder; kept for now. QUANTIZE=none serves the
+      # embedder at full precision.
+      QUANTIZE: ${RETRIEVAL_QUANTIZE:-int8}
+      # Reranker execution backend: none (default) disables the cross-encoder
+      # entirely — nothing is loaded, ordering falls through to the RRF pool.
+      # torch/onnx are retained only for the eval harness to switch back and
+      # compare (they reload the ~568M cross-encoder, formerly ~30-70s per query):
+      #   RERANK_BACKEND=torch docker compose up -d retrieval
+      RERANK_BACKEND: ${RERANK_BACKEND:-none}
+      RERANK_ONNX_REPO: ${RERANK_ONNX_REPO:-onnx-community/bge-reranker-v2-m3-ONNX}
+      RERANK_ONNX_FILE: ${RERANK_ONNX_FILE:-onnx/model_int8.onnx}
+      CANDIDATE_POOL: ${CANDIDATE_POOL:-24}
+      # Reranker-only (the cross-encoder's max sequence length); inert when
+      # RERANK_BACKEND=none, consulted only by torch/onnx.
+      RERANK_MAX_LENGTH: ${RERANK_MAX_LENGTH:-192}
     volumes:
+      # Same rationale as x-app-source: a code change should cost a restart,
+      # not an image rebuild.
+      - ./services/retrieval/app:/srv/app:ro
       - ./artifacts/graph:/data:ro
+      - ./artifacts/vector:/vectors:ro
+      # BGE-M3 + the reranker are ~4.5 GB; cache them so only the first boot
+      # pays the download.
+      - hf-cache:/hf
     ports:
       - "8001:8001"
 
+  # Opt-in (profile "local-llm"): the local llama.cpp generator. Off by default —
+  # generation now runs via the OpenAI-compatible driver against a hosted API, so
+  # starting this would load a ~2 GB GGUF into RAM to satisfy a healthcheck no one
+  # waits on, and would ship a ~2.17 GB image plus ~2 GB of weights to a deploy
+  # for nothing. Kept fully functional as the offline / rate-limited fallback:
+  #   docker compose --profile local-llm up -d      (pair with AI_DRIVER=grpc)
   generation:
     build: services/generation
+    restart: unless-stopped
+    profiles: ["local-llm"]
     environment:
-      # Point GENERATION_MODEL_PATH at a Hugging Face hub id (e.g.
-      # google/flan-t5-small) to serve a stand-in model without the mounted
-      # checkpoint; set GENERATION_MODEL_NAME to match so responses report
-      # the model actually served, and GENERATION_PROMPT_STYLE to "qa" for
-      # instruction-tuned stand-ins ("clue" is the notebook-faithful template
-      # for the fine-tuned BART checkpoint).
-      MODEL_PATH: ${GENERATION_MODEL_PATH:-/models/bart_jeopardy_final}
-      MODEL_NAME: ${GENERATION_MODEL_NAME:-bart-jeopardy-final}
-      PROMPT_STYLE: ${GENERATION_PROMPT_STYLE:-clue}
+      # Point GENERATION_MODEL_PATH at any Hugging Face hub id or a mounted
+      # checkpoint directory; set GENERATION_MODEL_NAME to match so responses
+      # report the model actually served. GENERATION_PROMPT_STYLE selects the
+      # prompt: "chat" for instruction-tuned chat models (the default),
+      # "qa" for seq2seq stand-ins, "clue" for the fine-tuned BART checkpoint.
+      # llama.cpp with 4-bit weights, not transformers: CPU generation is bound
+      # by memory traffic per token, so a quantized 3B model is both faster and
+      # far more capable than the float32 0.5B it replaces. See
+      # services/generation/app/llama_engine.py for the measurements.
+      BACKEND: ${GENERATION_BACKEND:-llama}
+      # Physical cores, not logical. llama.cpp's auto-detection sees the 16
+      # hyperthreads of this 8-core host; oversubscribing memory-bound GEMM
+      # makes the threads contend for the same cache lines.
+      N_THREADS: ${GENERATION_N_THREADS:-8}
+      GGUF_REPO: ${GENERATION_GGUF_REPO:-Qwen/Qwen2.5-3B-Instruct-GGUF}
+      GGUF_FILE: ${GENERATION_GGUF_FILE:-*q4_k_m*.gguf}
+      MODEL_PATH: ${GENERATION_MODEL_PATH:-Qwen/Qwen2.5-1.5B-Instruct}
+      MODEL_NAME: ${GENERATION_MODEL_NAME:-qwen2.5-3b-instruct-q4_k_m}
+      PROMPT_STYLE: ${GENERATION_PROMPT_STYLE:-chat}
+      # The Macedonian legal system prompt is shared with the PHP OpenAI-compatible
+      # driver via a single file, mounted below. prompt.py loads it from here.
+      LEGAL_PROMPT_PATH: /prompts/legal_mk.txt
+      # float32, deliberately — NOT "auto". Qwen2.5's config declares bfloat16,
+      # which PyTorch emulates on a non-AMX CPU: one short answer took over 400s
+      # that way, versus seconds at float32. Same trap as the retrieval service.
+      MODEL_DTYPE: ${GENERATION_MODEL_DTYPE:-float32}
+      MAX_OUTPUT_TOKENS: ${GENERATION_MAX_OUTPUT_TOKENS:-192}
     volumes:
-      - ./artifacts/models/bart_jeopardy_final:/models/bart_jeopardy_final:ro
-      - hf-cache:/root/.cache/huggingface
+      - ./services/generation/app:/srv/app:ro
+      - ./artifacts/models:/models:ro
+      - ./prompts:/prompts:ro
+      - hf-cache:/hf
     ports:
       - "8002:8002"
 
   laravel:
     build: .
+    restart: unless-stopped
+    volumes: *app-source
     ports:
       - "8000:8000"
     environment:
@@ -101,8 +259,10 @@ services:
         condition: service_healthy
       retrieval:
         condition: service_healthy
-      generation:
-        condition: service_healthy
+      # generation is intentionally NOT a dependency: it is opt-in via the
+      # local-llm profile. The default (hosted-API) path never calls it, and
+      # gating on it would only delay startup and force a ~2 GB GGUF to load.
+      # Under --profile local-llm it starts alongside but is not gated here.
     # --no-reload is required for PHP_CLI_SERVER_WORKERS to spawn multiple
     # workers; without it the built-in server is single-threaded and a long-lived
     # SSE stream would block every other request. Seed the news once after
@@ -111,6 +271,12 @@ services:
 
   worker:
     build: .
+    # Revive the worker if it dies: orphaned reserved jobs are only reaped by a
+    # live worker (after retry_after), so without this a crash or an OOM leaves a
+    # job stuck in the table indefinitely with no recovery. `unless-stopped` so a
+    # deliberate `docker compose stop` still stays down.
+    restart: unless-stopped
+    volumes: *app-source
     environment:
       <<: *laravel-env
     # The image's HTTP healthcheck probes :8000, which the worker doesn't serve.
@@ -123,12 +289,31 @@ services:
         condition: service_healthy
       retrieval:
         condition: service_healthy
-      generation:
-        condition: service_healthy
+      # generation is intentionally NOT a dependency: it is opt-in via the
+      # local-llm profile. The default (hosted-API) path never calls it, and
+      # gating on it would only delay startup and force a ~2 GB GGUF to load.
+      # Under --profile local-llm it starts alongside but is not gated here.
     # Processes StreamChatReply (retrieve + stream generation over gRPC, push
     # chunks to Redis) and runs the scheduler (hourly news:scrape) in the
-    # background. --timeout must exceed the job's own 180s timeout.
-    command: sh -c "(php artisan schedule:work &) ; php artisan queue:work --tries=1 --timeout=190"
+    # background.
+    #
+    # Deadline stack, innermost first — each inner timer fires and reports a
+    # clean error before the next outer one can kill the process mid-handling:
+    #   per-call gRPC    retrieval 45s ; generation 30s hosted / 240s grpc
+    #   job $timeout     derived ~90s hosted / ~300s grpc  (StreamChatReply)
+    #   --timeout 330    worker ceiling: >= the max job timeout, < retry_after
+    #                    (the job's own $timeout takes precedence per job; this
+    #                    is the fallback ceiling and the several-seconds-below-
+    #                    retry_after guard Laravel recommends)
+    #   retry_after 360  (DB_QUEUE_RETRY_AFTER) > job timeout, so a still-running
+    #                    job is never re-reserved and generated twice
+    # --tries=3 enables retries; StreamChatReply phase-gates them to BEFORE the
+    # first token (a post-token failure is permanently failed, never replayed)
+    # and an idempotency guard keyed on stream_id refuses to generate a stream
+    # twice. retry_after > job timeout above is what keeps a retry from running
+    # concurrently with the original. The job's own $tries is the real governor;
+    # this flag is kept in step.
+    command: sh -c "(php artisan schedule:work &) ; php artisan queue:work --tries=3 --timeout=330"
 
 volumes:
   pgdata:

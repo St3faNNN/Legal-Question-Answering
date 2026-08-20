@@ -39,6 +39,8 @@ class GraphRagReplyGenerator implements GeneratesReplies
             'conversation_id' => $conversation->getKey(),
             'entities' => $retrieval['entities'] ?? [],
             'triple_count' => count($retrieval['triples'] ?? []),
+            'chunk_count' => count($retrieval['chunks'] ?? []),
+            'context_items' => $retrieval['context_items'] ?? null,
             'latency_ms' => $retrieval['latency_ms'] ?? null,
         ]);
 

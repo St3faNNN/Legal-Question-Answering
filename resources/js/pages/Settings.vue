@@ -1,17 +1,26 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import AppShell from '@/components/AppShell.vue'
 import { useSettingsStore } from '@/stores/settings'
+import { useThemeStore, type Theme } from '@/stores/theme'
 
 const store = useSettingsStore()
+const themeStore = useThemeStore()
 const form = reactive({
-    theme: 'system',
     language: 'en',
     notifications: true,
     default_model: '' as string,
 })
 const saving = ref(false)
 const saved = ref(false)
+
+// Theme is a live preference owned by the theme store: changing it applies and
+// persists immediately (here and via the global toggle), so it is not part of
+// the Save-button batch below.
+const selectedTheme = computed<Theme>({
+    get: () => themeStore.theme,
+    set: (value) => themeStore.setTheme(value),
+})
 
 const languages = [
     { value: 'en', label: 'English' },
@@ -33,19 +42,9 @@ const languages = [
 onMounted(async () => {
     await store.fetch()
     if (store.settings) {
-        form.theme = store.settings.theme
         form.language = store.settings.language
         form.notifications = store.settings.notifications
         form.default_model = store.settings.default_model ?? ''
-    }
-})
-
-// Live-preview the theme immediately when the user changes the dropdown,
-// without waiting for the save button. The persisted value may differ
-// if they revert, but this gives instant feedback on the settings page.
-watch(() => form.theme, (newTheme) => {
-    if (store.settings) {
-        store.settings.theme = newTheme
     }
 })
 
@@ -74,12 +73,13 @@ async function handleSubmit() {
             <form @submit.prevent="handleSubmit" class="mt-8 space-y-6">
                 <div>
                     <label for="theme" class="block text-sm font-medium text-gray-700 dark:text-gray-300">Theme</label>
-                    <select v-model="form.theme"
+                    <select id="theme" v-model="selectedTheme"
                         class="mt-1 block w-full rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 shadow-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500">
                         <option value="system">System</option>
                         <option value="light">Light</option>
                         <option value="dark">Dark</option>
                     </select>
+                    <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Applies immediately. Also available from the toggle in the top-right corner.</p>
                 </div>
 
                 <div>

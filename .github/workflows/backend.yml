@@ -43,3 +43,34 @@ jobs:
         run: |
           php artisan config:clear
           php artisan test
+
+  services:
+    # The retrieval and generation services carry the hybrid search and the
+    # generator; without this job their pytest suites are unguarded.
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [retrieval, generation]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          # Matches the services/*/Dockerfile base image.
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: services/${{ matrix.service }}/requirements.txt
+
+      - name: Install dependencies
+        working-directory: services/${{ matrix.service }}
+        # torch comes from the CPU wheel index so the multi-GB CUDA build is
+        # never pulled — same order as the Dockerfile.
+        run: |
+          pip install torch==2.2.2 --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements.txt
+
+      - name: Run tests
+        working-directory: services/${{ matrix.service }}
+        run: python -m pytest tests -q

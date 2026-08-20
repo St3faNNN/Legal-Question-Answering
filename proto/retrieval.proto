@@ -22,9 +22,22 @@ message Triple {
   double confidence = 4;
 }
 
+// One reranked passage from the vector store. `source` is the corpus citation
+// the passage came from; `score` is the cross-encoder's relevance score.
+message Chunk {
+  string id = 1;
+  string text = 2;
+  string source = 3;
+  double score = 4;
+}
+
 message RetrieveResponse {
   string context = 1;
   repeated string entities = 2;
   repeated Triple triples = 3;
   int32 latency_ms = 4;
+  repeated Chunk chunks = 5;
+  // How many reranked passages actually fit the context budget. Lower than the
+  // number of chunks when the budget cut the tail off.
+  int32 context_items = 6;
 }

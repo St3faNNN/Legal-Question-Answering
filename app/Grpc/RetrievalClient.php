@@ -16,6 +16,8 @@ interface RetrievalClient
      *     context: string,
      *     entities: list<string>,
      *     triples: list<array{head: string, relation: string, tail: string, confidence: float}>,
+     *     chunks: list<array{id: string, text: string, source: string, score: float}>,
+     *     context_items: int,
      *     latency_ms: int,
      * }
      */

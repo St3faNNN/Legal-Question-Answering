@@ -14,7 +14,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0fretrieval.proto\x12\x15graphrag.retrieval.v1\"#\n\x0fRetrieveRequest\x12\x10\n\x08question\x18\x01 \x01(\t\"J\n\x06Triple\x12\x0c\n\x04head\x18\x01 \x01(\t\x12\x10\n\x08relation\x18\x02 \x01(\t\x12\x0c\n\x04tail\x18\x03 \x01(\t\x12\x12\n\nconfidence\x18\x04 \x01(\x01\"y\n\x10RetrieveResponse\x12\x0f\n\x07\x63ontext\x18\x01 \x01(\t\x12\x10\n\x08\x65ntities\x18\x02 \x03(\t\x12.\n\x07triples\x18\x03 \x03(\x0b\x32\x1d.graphrag.retrieval.v1.Triple\x12\x12\n\nlatency_ms\x18\x04 \x01(\x05\x32h\n\tRetrieval\x12[\n\x08Retrieve\x12&.graphrag.retrieval.v1.RetrieveRequest\x1a\'.graphrag.retrieval.v1.RetrieveResponseB<\xca\x02\x15\x41pp\\Grpc\\Pb\\Retrieval\xe2\x02!App\\Grpc\\Pb\\Retrieval\\GPBMetadatab\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0fretrieval.proto\x12\x15graphrag.retrieval.v1\"#\n\x0fRetrieveRequest\x12\x10\n\x08question\x18\x01 \x01(\t\"J\n\x06Triple\x12\x0c\n\x04head\x18\x01 \x01(\t\x12\x10\n\x08relation\x18\x02 \x01(\t\x12\x0c\n\x04tail\x18\x03 \x01(\t\x12\x12\n\nconfidence\x18\x04 \x01(\x01\"@\n\x05\x43hunk\x12\n\n\x02id\x18\x01 \x01(\t\x12\x0c\n\x04text\x18\x02 \x01(\t\x12\x0e\n\x06source\x18\x03 \x01(\t\x12\r\n\x05score\x18\x04 \x01(\x01\"\xbe\x01\n\x10RetrieveResponse\x12\x0f\n\x07\x63ontext\x18\x01 \x01(\t\x12\x10\n\x08\x65ntities\x18\x02 \x03(\t\x12.\n\x07triples\x18\x03 \x03(\x0b\x32\x1d.graphrag.retrieval.v1.Triple\x12\x12\n\nlatency_ms\x18\x04 \x01(\x05\x12,\n\x06\x63hunks\x18\x05 \x03(\x0b\x32\x1c.graphrag.retrieval.v1.Chunk\x12\x15\n\rcontext_items\x18\x06 \x01(\x05\x32h\n\tRetrieval\x12[\n\x08Retrieve\x12&.graphrag.retrieval.v1.RetrieveRequest\x1a\'.graphrag.retrieval.v1.RetrieveResponseB<\xca\x02\x15\x41pp\\Grpc\\Pb\\Retrieval\xe2\x02!App\\Grpc\\Pb\\Retrieval\\GPBMetadatab\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -26,8 +26,10 @@ if _descriptor._USE_C_DESCRIPTORS == False:
   _globals['_RETRIEVEREQUEST']._serialized_end=77
   _globals['_TRIPLE']._serialized_start=79
   _globals['_TRIPLE']._serialized_end=153
-  _globals['_RETRIEVERESPONSE']._serialized_start=155
-  _globals['_RETRIEVERESPONSE']._serialized_end=276
-  _globals['_RETRIEVAL']._serialized_start=278
-  _globals['_RETRIEVAL']._serialized_end=382
+  _globals['_CHUNK']._serialized_start=155
+  _globals['_CHUNK']._serialized_end=219
+  _globals['_RETRIEVERESPONSE']._serialized_start=222
+  _globals['_RETRIEVERESPONSE']._serialized_end=412
+  _globals['_RETRIEVAL']._serialized_start=414
+  _globals['_RETRIEVAL']._serialized_end=518
 # @@protoc_insertion_point(module_scope)

@@ -2,9 +2,19 @@ grpcio==1.62.2
 grpcio-health-checking==1.62.2
 protobuf==4.25.8
 torch==2.2.2
-transformers==4.30.0
-tokenizers>=0.13.3,<0.14
-huggingface_hub==0.16.4
+# Qwen2 support landed in transformers 4.37; 4.44 is the first release that
+# pairs it with a stable chat-template API.
+transformers==4.44.2
+tokenizers>=0.19,<0.20
+huggingface_hub>=0.23.2,<1.0
+# Required by transformers for low_cpu_mem_usage, which halves peak memory while
+# loading weights — the difference between fitting on a small host and not.
+accelerate==0.33.0
 numpy==1.26.4
 sentencepiece==0.1.99
+# CPU inference backend (BACKEND=llama). Quantized weights cut the per-token
+# memory traffic that dominates CPU generation; see app/llama_engine.py. The
+# Dockerfile installs this from the project's prebuilt CPU wheel index so the
+# native library is not compiled during the image build.
+llama-cpp-python==0.3.2
 pytest==8.3.4

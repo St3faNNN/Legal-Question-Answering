@@ -27,8 +27,6 @@ Homestead.json
 Homestead.yaml
 Thumbs.db
 
-@"
-
 # python services
 services/**/.venv/
 services/**/__pycache__/
@@ -37,5 +35,11 @@ services/**/.pytest_cache/
 .claude/
 .agents/
 .scribe/
-"@ | Out-File -FilePath .gitignore -Append -Encoding utf8
+
+tests/eval/results/*
+!tests/eval/results/.gitkeep
+
+# Generated from proto/ by scripts/gen-proto.sh --php (and by the Docker build).
+# Present on the host only so docker-compose can mount app/ over the image.
+/app/Grpc/Pb
 

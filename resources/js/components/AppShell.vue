@@ -2,6 +2,8 @@
 import { ref } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth';
+import { legalDocList } from '@/legal/documents'
+import ThemeToggle from '@/components/ThemeToggle.vue'
 
 const auth = useAuthStore()
 const router = useRouter()
@@ -48,6 +50,19 @@ const navItems = [
                 </RouterLink>
             </nav>
             <div class="absolute bottom-0 left-0 right-0 p-4 border-t border-gray-200 dark:border-gray-800">
+                <div class="mb-3">
+                    <ThemeToggle />
+                </div>
+                <nav class="flex flex-wrap gap-x-3 gap-y-1 mb-3">
+                    <RouterLink
+                        v-for="doc in legalDocList"
+                        :key="doc.id"
+                        :to="doc.route"
+                        class="text-[11px] text-gray-400 dark:text-gray-500 hover:text-indigo-600 dark:hover:text-indigo-400"
+                    >
+                        {{ doc.titleMk }}
+                    </RouterLink>
+                </nav>
                 <div class="flex items-center justify-between">
                     <div class="flex items-center">
                         <div class="w-8 h-8 rounded-full bg-indigo-100 dark:bg-indigo-900 flex items-center justify-center text-sm font-medium text-indigo-700 dark:text-indigo-300">
@@ -84,6 +99,7 @@ const navItems = [
                     </svg>
                 </button>
                 <span class="ml-3 text-lg font-semibold text-gray-900 dark:text-gray-100">GraphRAG</span>
+                <ThemeToggle class="ml-auto" />
             </header>
             <main class="p-6">
                 <slot />

@@ -1,11 +1,17 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import { chatApi, type GraphTriple, type Message } from '@/api'
+import { chatApi, type GraphTriple, type Message, type RetrievedChunk } from '@/api'
 
 export const useChatStore = defineStore('chat', () => {
     const messages = ref<Message[]>([])
     const sending = ref(false)
     const error = ref<string | null>(null)
+    /**
+     * What the worker is doing right now, from the stream's `status` events.
+     * Retrieval alone runs for tens of seconds on CPU, so a bare spinner leaves
+     * the user unable to tell progress from a hang.
+     */
+    const status = ref<string | null>(null)
 
     /**
      * Send a message and stream the assistant reply token-by-token. The POST
@@ -16,6 +22,7 @@ export const useChatStore = defineStore('chat', () => {
     async function send(message: string, conversationId?: number) {
         sending.value = true
         error.value = null
+        status.value = null
 
         // Optimistic user bubble (negative id = local-only) so the thread and
         // the "Thinking..." indicator appear immediately.
@@ -45,6 +52,7 @@ export const useChatStore = defineStore('chat', () => {
             throw e
         } finally {
             sending.value = false
+            status.value = null
         }
     }
 
@@ -86,14 +94,27 @@ export const useChatStore = defineStore('chat', () => {
 
             source.onmessage = (event: MessageEvent) => {
                 const data = JSON.parse(event.data as string)
-                if (data.type === 'chunk') {
+                if (data.type === 'status') {
+                    status.value =
+                        data.stage === 'generating'
+                            ? `Се подготвува резиме од ${data.chunk_count ?? 0} одредби...`
+                            : 'Пребарување на прописите...'
+                } else if (data.type === 'chunk') {
+                    status.value = null
                     messages.value[bubbleIndex()].content += data.text
                 } else if (data.type === 'done') {
                     const live = messages.value[bubbleIndex()]
                     live.id = data.message_id ?? live.id
                     live.model = data.model ?? null
                     live.tokens = data.tokens ?? null
-                    live.metadata = { top_triples: (data.top_triples ?? []) as GraphTriple[] }
+                    live.metadata = {
+                        top_triples: (data.top_triples ?? []) as GraphTriple[],
+                        top_chunks: (data.top_chunks ?? []) as RetrievedChunk[],
+                        ttft_ms: (data.ttft_ms ?? null) as number | null,
+                        retrieval_ms: (data.retrieval_ms ?? null) as number | null,
+                        total_ms: (data.total_ms ?? null) as number | null,
+                        total_latency_ms: (data.total_ms ?? null) as number | null,
+                    }
                     source.close()
                     resolve()
                 } else if (data.type === 'error') {
@@ -114,5 +135,5 @@ export const useChatStore = defineStore('chat', () => {
         error.value = null
     }
 
-    return { messages, sending, error, send, setMessages, reset }
+    return { messages, sending, error, status, send, setMessages, reset }
 })

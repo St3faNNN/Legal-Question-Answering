@@ -22,13 +22,14 @@ class AuthController extends Controller
      *
      * @group Authentication
      *
+     * @bodyParam invite_code string required A valid single-use invitation code. Registration is invitation-only. Example: AB12-CD34-EF56
      * @bodyParam name string required The user's display name. Example: John Doe
      * @bodyParam email string required The user's email address. Example: john@example.com
      * @bodyParam password string required Minimum 8 characters. Example: password123
      * @bodyParam password_confirmation string required Must match password. Example: password123
      *
      * @response 201 {"data":{"id":1,"name":"John Doe","email":"john@example.com","bio":null,"created_at":"2026-07-16T14:00:00.000000Z","updated_at":"2026-07-16T14:00:00.000000Z","last_active_at":null}}
-     * @response 422 {"message":"The email has already been taken.","errors":{"email":["The email has already been taken."]}}
+     * @response 422 {"message":"This invitation code is invalid, expired, or has already been used.","errors":{"invite_code":["This invitation code is invalid, expired, or has already been used."]}}
      */
     public function register(RegisterUserRequest $request): JsonResponse
     {

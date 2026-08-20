@@ -11,6 +11,10 @@ const routes: RouteRecordRaw[] = [
     { path: '/settings', name: 'settings', component: () => import('@/pages/Settings.vue'), meta: { auth: true } },
     { path: '/profile', name: 'profile', component: () => import('@/pages/Profile.vue'), meta: { auth: true } },
     { path: '/', name: 'landing', component: () => import('@/pages/Landing.vue'), meta: { guest: true } },
+    // Legal documents — public, reachable whether signed in or not (no auth/guest meta).
+    { path: '/privacy', name: 'privacy', component: () => import('@/pages/legal/PrivacyPolicy.vue') },
+    { path: '/terms', name: 'terms', component: () => import('@/pages/legal/TermsOfUse.vue') },
+    { path: '/disclaimer', name: 'disclaimer', component: () => import('@/pages/legal/Disclaimer.vue') },
     { path: '/:pathMatch(.*)', redirect: '/dashboard' },
 ]
 

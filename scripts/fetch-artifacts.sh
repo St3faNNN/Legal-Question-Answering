@@ -1,66 +1,85 @@
 #!/usr/bin/env bash
 #
-# Fetches the large AI artifacts the Python services need. Idempotent: existing
-# targets are skipped, so re-running after a partial failure is safe.
+# Verifies the corpus artifacts the Retrieval Service needs are in place:
 #
-#   artifacts/graph/knowledge_graph_with_coref.graphml   (~45 MB, plain git blob)
-#   artifacts/models/bart_jeopardy_final/                (~1.6 GB, weights via Git LFS)
+#   artifacts/vector/vectors.sqlite   BGE-M3 chunk embeddings + chunk text
+#   artifacts/graph/graph.graphml     article cross-reference graph
 #
-# Requires: curl, git, git-lfs. Never commit artifacts/ — it is gitignored.
+# Both are built from the same corpus by the offline indexing pipeline and are
+# not downloadable from here — artifacts/ is gitignored and the pair is specific
+# to the deployment. Copy them in, then run this to confirm they are readable
+# and mutually consistent before `docker compose up`.
+#
+# The model weights are no longer fetched: the Generation Service pulls
+# Qwen2.5-1.5B-Instruct and the Retrieval Service pulls BGE-M3 plus
+# bge-reranker-v2-m3 from the Hugging Face hub into the shared hf-cache volume
+# on first boot.
+#
+# Requires: python3 (stdlib only). Override the interpreter with PYTHON=...
 
 set -euo pipefail
 
-REPO_URL="https://github.com/St3faNNN/GraphRAG-JeopardyEvaluation"
-RAW_BASE="https://raw.githubusercontent.com/St3faNNN/GraphRAG-JeopardyEvaluation/main"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-GRAPH_DIR="$ROOT_DIR/artifacts/graph"
-MODEL_DIR="$ROOT_DIR/artifacts/models/bart_jeopardy_final"
-GRAPH_FILE="$GRAPH_DIR/knowledge_graph_with_coref.graphml"
+VECTOR_FILE="$ROOT_DIR/artifacts/vector/vectors.sqlite"
+GRAPH_FILE="$ROOT_DIR/artifacts/graph/graph.graphml"
 
-file_size() {
-    if stat --version >/dev/null 2>&1; then
-        stat -c%s "$1"
-    else
-        stat -f%z "$1"
+missing=0
+for path in "$VECTOR_FILE" "$GRAPH_FILE"; do
+    if [ ! -f "$path" ]; then
+        echo "ERROR: missing artifact: $path" >&2
+        missing=1
     fi
-}
-
-# --- Knowledge graph (plain blob, direct download) ---------------------------
-if [ -f "$GRAPH_FILE" ] && [ "$(file_size "$GRAPH_FILE")" -gt 40000000 ]; then
-    echo "[graph] already present, skipping ($GRAPH_FILE)"
-else
-    echo "[graph] downloading knowledge_graph_with_coref.graphml (~45 MB)..."
-    mkdir -p "$GRAPH_DIR"
-    curl -fL --retry 3 "$RAW_BASE/knowledge%20graph/knowledge_graph_with_coref.graphml" \
-        -o "$GRAPH_FILE.part"
-    mv "$GRAPH_FILE.part" "$GRAPH_FILE"
-    echo "[graph] done: $(file_size "$GRAPH_FILE") bytes"
+done
+if [ "$missing" -ne 0 ]; then
+    echo "Copy both corpus artifacts into artifacts/ and re-run." >&2
+    exit 1
 fi
 
-# --- BART checkpoint (pytorch_model.bin is stored in Git LFS) -----------------
-if [ -f "$MODEL_DIR/pytorch_model.bin" ] && [ "$(file_size "$MODEL_DIR/pytorch_model.bin")" -gt 100000000 ]; then
-    echo "[model] already present, skipping ($MODEL_DIR)"
-else
-    if ! git lfs version >/dev/null 2>&1; then
-        echo "[model] ERROR: git-lfs is required to fetch the model weights." >&2
-        exit 1
-    fi
-    TMP_DIR="$(mktemp -d)"
-    trap 'rm -rf "$TMP_DIR"' EXIT
-    echo "[model] cloning repo (weights ~1.6 GB via LFS, this takes a while)..."
-    GIT_LFS_SKIP_SMUDGE=1 git clone --depth 1 "$REPO_URL" "$TMP_DIR/repo"
-    git -C "$TMP_DIR/repo" lfs pull --include "knowledge graph/bart_jeopardy_final/*"
-    mkdir -p "$MODEL_DIR"
-    cp "$TMP_DIR/repo/knowledge graph/bart_jeopardy_final/"* "$MODEL_DIR/"
+"${PYTHON:-python3}" - "$VECTOR_FILE" "$GRAPH_FILE" <<'PY'
+import sqlite3
+import sys
+import xml.etree.ElementTree as ET
 
-    # A ~130-byte pytorch_model.bin is an LFS pointer, not real weights.
-    BIN_SIZE="$(file_size "$MODEL_DIR/pytorch_model.bin")"
-    if [ "$BIN_SIZE" -lt 100000000 ]; then
-        echo "[model] ERROR: pytorch_model.bin is $BIN_SIZE bytes — an LFS pointer, not weights." >&2
-        echo "[model] Check that git-lfs is installed and 'git lfs pull' succeeded." >&2
-        exit 1
-    fi
-    echo "[model] done: pytorch_model.bin is $BIN_SIZE bytes"
-fi
+vector_path, graph_path = sys.argv[1], sys.argv[2]
+
+connection = sqlite3.connect(f"file:{vector_path}?mode=ro", uri=True)
+meta = dict(connection.execute("SELECT key, value FROM meta"))
+chunks = connection.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+vectors = connection.execute("SELECT COUNT(*) FROM vectors").fetchone()[0]
+orphans = connection.execute(
+    "SELECT COUNT(*) FROM chunks c LEFT JOIN vectors v ON v.chunk_id = c.id WHERE v.chunk_id IS NULL"
+).fetchone()[0]
+blob = connection.execute("SELECT dense FROM vectors LIMIT 1").fetchone()[0]
+connection.close()
+
+dim = int(meta.get("dim", 0))
+print(f"[vector] {chunks} chunks, {vectors} vectors, model={meta.get('embed_model', '?')}, dim={dim}")
+
+if orphans:
+    sys.exit(f"[vector] ERROR: {orphans} chunks have no embedding")
+if len(blob) != dim * 4:
+    sys.exit(f"[vector] ERROR: dense blob is {len(blob)} bytes, expected {dim * 4} ({dim} float32)")
+
+ns = "{http://graphml.graphdrawing.org/xmlns}"
+root = ET.parse(graph_path).getroot()
+nodes = root.iter(f"{ns}node")
+node_ids = {node.get("id") for node in nodes}
+edges = list(root.iter(f"{ns}edge"))
+print(f"[graph]  {len(node_ids)} articles, {len(edges)} cross-references")
+
+edge_keys = {key.get("id") for key in root.iter(f"{ns}key") if key.get("for") == "edge"}
+if not any(key.get("attr.name") == "confidence" for key in root.iter(f"{ns}key")):
+    sys.exit("[graph]  ERROR: no edge 'confidence' attribute — expansion ranking would be arbitrary")
+
+# The two artifacts are joined on unit_key; without an overlap the graph arm
+# silently contributes nothing.
+connection = sqlite3.connect(f"file:{vector_path}?mode=ro", uri=True)
+units = {row[0] for row in connection.execute("SELECT DISTINCT unit_key FROM chunks")}
+connection.close()
+shared = units & node_ids
+print(f"[join]   {len(shared)} article ids present in both artifacts")
+if not shared:
+    sys.exit("[join]   ERROR: no chunk unit_key matches any graph node id — the two artifacts are not from the same corpus")
+PY
 
 echo "All artifacts ready under $ROOT_DIR/artifacts/"

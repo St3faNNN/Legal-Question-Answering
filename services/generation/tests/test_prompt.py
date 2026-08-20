@@ -1,10 +1,12 @@
 import pytest
 
 from app.prompt import (
+    CHAT_SYSTEM,
     CLUE_NO_CONTEXT,
     CLUE_WITH_CONTEXT,
     QA_NO_CONTEXT,
     QA_WITH_CONTEXT,
+    build_messages,
     build_prompt,
 )
 
@@ -97,3 +99,72 @@ def test_unifiedqa_folds_history_into_context():
 def test_unifiedqa_without_context_or_history():
     prompt = build_prompt("Who is Einstein?", "", None, style="unifiedqa")
     assert prompt == "who is einstein? \\n no information available"
+
+
+# --- chat style (Macedonian legal QA for an instruction-tuned chat model) -----
+
+
+def test_chat_messages_lead_with_the_system_instruction():
+    messages = build_messages("Колку трае годишниот одмор?", "[ZAKON-A, чл. 2]\nГодишен одмор")
+
+    assert messages[0] == {"role": "system", "content": CHAT_SYSTEM}
+    assert messages[-1]["role"] == "user"
+
+
+def test_chat_system_demands_grounded_macedonian_answers():
+    assert "користејќи ги дадените извори" in CHAT_SYSTEM
+    assert "на македонски јазик" in CHAT_SYSTEM
+    assert "информацијата не е достапна" in CHAT_SYSTEM
+
+
+def test_chat_system_bounds_answer_length():
+    """Answer length is answer latency at ~0.55s per token on CPU. Without an
+    explicit sentence limit the model enumerated until it hit the token cap and
+    was truncated mid-word."""
+    assert "најмногу три реченици" in CHAT_SYSTEM
+    assert "без набројување" in CHAT_SYSTEM
+
+
+def test_chat_system_stays_short_enough_for_a_small_model():
+    """A longer rule list — specifically one demanding a bracketed citation per
+    statement — made Qwen2.5-0.5B emit a lone citation instead of an answer."""
+    assert len(CHAT_SYSTEM.splitlines()) <= 5
+
+
+def test_chat_user_message_carries_context_and_question():
+    messages = build_messages("Колку трае одморот?", "[ZAKON-A, чл. 2]\nГодишен одмор")
+
+    content = messages[-1]["content"]
+    assert "Извори:" in content
+    assert "[ZAKON-A, чл. 2]" in content
+    assert "Прашање: Колку трае одморот?" in content
+
+
+def test_chat_without_context_says_so_rather_than_inventing():
+    messages = build_messages("Здраво", "   ")
+
+    content = messages[-1]["content"]
+    assert "Нема пронајдени извори" in content
+    assert "Извори:" not in content
+
+
+def test_chat_history_is_interleaved_before_the_question():
+    history = [
+        {"role": "user", "content": "Што е јавна набавка?"},
+        {"role": "assistant", "content": "Договор склучен во писмена форма."},
+    ]
+    messages = build_messages("А кој ја спроведува?", "контекст", history)
+
+    assert [message["role"] for message in messages] == ["system", "user", "assistant", "user"]
+    assert messages[1]["content"] == "Што е јавна набавка?"
+    assert "А кој ја спроведува?" in messages[-1]["content"]
+
+
+def test_chat_without_history_is_system_plus_question():
+    assert len(build_messages("Прашање?", "контекст", [])) == 2
+
+
+def test_braces_in_context_are_literal_in_chat_style():
+    messages = build_messages("q", "weird {braces} in context")
+
+    assert "weird {braces} in context" in messages[-1]["content"]

@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { legalDocList } from '@/legal/documents'
+import ThemeToggle from '@/components/ThemeToggle.vue'
+
 const steps = [
     {
         title: 'You ask a question',
@@ -48,6 +51,7 @@ const features = [
         <header class="mx-auto max-w-6xl px-6 py-5 flex items-center justify-between">
             <span class="text-lg font-bold tracking-tight">GraphRAG Chat</span>
             <nav class="flex items-center gap-3">
+                <ThemeToggle />
                 <RouterLink
                     :to="{ name: 'login' }"
                     class="text-sm font-medium text-gray-600 hover:text-gray-900 dark:text-gray-300 dark:hover:text-white px-3 py-2"
@@ -146,9 +150,17 @@ const features = [
         <footer class="mx-auto max-w-6xl px-6 py-10 border-t border-gray-200 dark:border-gray-800">
             <div class="flex flex-col sm:flex-row items-center justify-between gap-4 text-sm text-gray-500 dark:text-gray-500">
                 <span>&copy; {{ new Date().getFullYear() }} GraphRAG Chat</span>
-                <div class="flex items-center gap-6">
+                <div class="flex flex-wrap items-center justify-center gap-x-6 gap-y-2">
                     <RouterLink :to="{ name: 'login' }" class="hover:text-gray-800 dark:hover:text-gray-300">Sign in</RouterLink>
                     <RouterLink :to="{ name: 'register' }" class="hover:text-gray-800 dark:hover:text-gray-300">Create account</RouterLink>
+                    <RouterLink
+                        v-for="doc in legalDocList"
+                        :key="doc.id"
+                        :to="doc.route"
+                        class="hover:text-gray-800 dark:hover:text-gray-300"
+                    >
+                        {{ doc.titleMk }}
+                    </RouterLink>
                 </div>
             </div>
         </footer>

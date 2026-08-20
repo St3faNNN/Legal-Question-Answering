@@ -2,6 +2,8 @@
 import { reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import LegalFooter from '@/components/LegalFooter.vue'
+import ThemeToggle from '@/components/ThemeToggle.vue'
 
 const router = useRouter()
 const auth = useAuthStore()
@@ -30,6 +32,9 @@ async function handleSubmit() {
 <template>
     <div class="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-950 py-12 px-4 sm:px-6 lg:px-8">
         <div class="max-w-md w-full space-y-8">
+            <div class="flex justify-end">
+                <ThemeToggle />
+            </div>
             <div>
                 <h1 class="text-3xl font-bold text-center text-gray-900 dark:text-gray-100">GraphRAG</h1>
                 <p class="mt-2 text-center text-sm text-gray-600 dark:text-gray-400">Sign in to your account</p>
@@ -66,6 +71,8 @@ async function handleSubmit() {
                     <RouterLink :to="{ name: 'register' }" class="font-medium text-indigo-600 hover:text-indigo-500">Register</RouterLink>
                 </p>
             </form>
+
+            <LegalFooter class="pt-2" />
         </div>
     </div>
 </template>

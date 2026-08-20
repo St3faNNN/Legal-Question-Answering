@@ -2,9 +2,10 @@
 import { computed, onMounted, ref, nextTick, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppShell from '@/components/AppShell.vue'
+import AssistantResponse from '@/components/AssistantResponse.vue'
 import { useChatStore } from '@/stores/chat'
 import { useConversationStore } from '@/stores/conversations'
-import type { GraphTriple, Message } from '@/api'
+import type { Message } from '@/api'
 
 const route = useRoute()
 const router = useRouter()
@@ -134,14 +135,15 @@ function conversationLabel(conv: { title: string | null; display_title?: string;
     return conv.title ?? conv.display_title ?? `Conversation ${conv.id}`
 }
 
-// The top knowledge-graph facts the model grounded this answer in. Empty for
-// small talk (retrieval found nothing) — the block is then hidden.
-function topTriples(msg: Message): GraphTriple[] {
-    return msg.role === 'assistant' ? (msg.metadata?.top_triples ?? []) : []
-}
-
-function formatTriple(triple: GraphTriple): string {
-    return `${triple.head} → ${triple.relation} → ${triple.tail}`.replace(/\s+/g, ' ').trim()
+// The actively-streaming assistant bubble: the last message, still filling, with
+// no metadata yet (retrieval results land with the `done` event). Passed to
+// AssistantResponse so it shows a caret and the summary-only streaming state.
+function isStreaming(msg: Message): boolean {
+    if (msg.role !== 'assistant') {
+        return false
+    }
+    const last = chat.messages[chat.messages.length - 1]
+    return chat.sending && last?.id === msg.id && !msg.metadata
 }
 </script>
 
@@ -176,7 +178,7 @@ function formatTriple(triple: GraphTriple): string {
                             New Chat
                         </button>
 
-                        <div v-if="conversations.conversations.length === 0" class="px-4 py-6 text-center text-sm text-gray-400 dark:text-gray-500">
+                        <div v-if="conversations.conversations.length === 0" class="px-4 py-6 text-center text-sm text-gray-500 dark:text-gray-400">
                             No conversations yet
                         </div>
                         <button
@@ -211,7 +213,7 @@ function formatTriple(triple: GraphTriple): string {
             <!-- Chat thread -->
             <div ref="thread" class="flex-1 overflow-y-auto space-y-4 pb-4">
                 <div v-if="chat.messages.length === 0" class="h-full flex items-center justify-center">
-                    <p class="text-gray-400 dark:text-gray-600 text-sm">Send a message to start the conversation.</p>
+                    <p class="text-gray-500 dark:text-gray-400 text-sm">Send a message to start the conversation.</p>
                 </div>
                 <div
                     v-for="msg in chat.messages"
@@ -219,40 +221,23 @@ function formatTriple(triple: GraphTriple): string {
                     class="flex"
                     :class="msg.role === 'user' ? 'justify-end' : 'justify-start'"
                 >
+                    <!-- User turn: a plain chat bubble. -->
                     <div
-                        class="max-w-xs sm:max-w-md px-4 py-3 rounded-2xl"
-                        :class="msg.role === 'user'
-                            ? 'bg-indigo-600 dark:bg-indigo-700 text-white rounded-br-sm'
-                            : 'bg-gray-200 dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-bl-sm'"
+                        v-if="msg.role === 'user'"
+                        class="px-4 py-3 rounded-2xl max-w-xs sm:max-w-md bg-indigo-600 dark:bg-indigo-700 text-white rounded-br-sm"
                     >
                         <p class="text-sm whitespace-pre-wrap">{{ msg.content }}</p>
-
-                        <!-- Top knowledge-graph facts this answer was grounded in -->
-                        <div
-                            v-if="topTriples(msg).length"
-                            class="mt-3 pt-2 border-t border-gray-300 dark:border-gray-700"
-                        >
-                            <p class="text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
-                                Top sources from the knowledge graph
-                            </p>
-                            <ol class="mt-1 space-y-0.5">
-                                <li
-                                    v-for="(triple, i) in topTriples(msg)"
-                                    :key="i"
-                                    class="flex gap-1.5 text-xs text-gray-600 dark:text-gray-400"
-                                >
-                                    <span class="text-gray-400 dark:text-gray-500 tabular-nums">{{ i + 1 }}.</span>
-                                    <span class="break-words">{{ formatTriple(triple) }}</span>
-                                </li>
-                            </ol>
-                        </div>
-
-                        <p v-if="msg.model" class="text-xs mt-2 opacity-60">{{ msg.model }}</p>
                     </div>
+
+                    <!-- Assistant turn: the retrieved provisions lead, with the
+                         machine-generated summary subordinate and a persistent
+                         notice. Wider than the user bubble — the article text
+                         shown open needs the room. -->
+                    <AssistantResponse v-else :msg="msg" :streaming="isStreaming(msg)" />
                 </div>
                 <div v-if="awaitingFirstToken" class="flex justify-start">
                     <div class="bg-gray-200 dark:bg-gray-800 text-gray-500 dark:text-gray-400 px-4 py-3 rounded-2xl rounded-bl-sm">
-                        <p class="text-sm">Thinking...</p>
+                        <p class="text-sm">{{ chat.status ?? 'Се обработува...' }}</p>
                     </div>
                 </div>
                 <p v-if="chat.error" class="text-sm text-red-600 dark:text-red-400 text-center">{{ chat.error }}</p>

@@ -82,6 +82,11 @@ class ChatService
      */
     public function startStreamedReply(User $user, string $content, ?int $conversationId = null): array
     {
+        // Anchor the end-to-end timer at query receipt, before the message is
+        // even persisted, and carry it into the job so it can measure through to
+        // the final generated word across the web->worker boundary.
+        $receivedAt = microtime(true);
+
         $conversation = DB::transaction(function () use ($user, $content, $conversationId): Conversation {
             $conversation = $conversationId !== null
                 ? $this->conversations->findForUser($user, $conversationId)
@@ -100,7 +105,7 @@ class ChatService
         // Record ownership so the SSE endpoint can authorize the subscriber.
         Redis::setex("chat:stream:{$streamId}:user", 300, (string) $user->id);
 
-        StreamChatReply::dispatch($conversation->id, $streamId, $content);
+        StreamChatReply::dispatch($conversation->id, $streamId, $content, $receivedAt);
 
         $this->logger->info('chat.stream_started', [
             'conversation_id' => $conversation->id,

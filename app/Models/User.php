@@ -50,6 +50,14 @@ class User extends Authenticatable
     }
 
     /**
+     * @return HasMany<TermsAcceptance, $this>
+     */
+    public function termsAcceptances(): HasMany
+    {
+        return $this->hasMany(TermsAcceptance::class);
+    }
+
+    /**
      * @return HasMany<TodoList, $this>
      */
     public function todoLists(): HasMany
