@@ -261,6 +261,17 @@ function isStreaming(msg: Message): boolean {
                         Send
                     </button>
                 </form>
+
+                <!-- Permanent free-tier data-use notice, shown where the decision
+                     to send is made (not only on the policy page). Not dismissable. -->
+                <p class="mt-2 text-xs text-gray-500 dark:text-gray-400 text-center leading-relaxed">
+                    Прашањата се обработуваат од Google (Gemini) и може да се користат за подобрување на нивните
+                    модели. Не внесувајте доверливи или лични податоци.
+                    <span class="block text-gray-400 dark:text-gray-500">
+                        Questions are processed by Google (Gemini) and may be used to improve their models. Do not
+                        enter confidential or personal information.
+                    </span>
+                </p>
             </div>
         </div>
     </AppShell>

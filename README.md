@@ -154,11 +154,15 @@ graph.
 
 The part most RAG demos skip, and the reason every decision below has a number.
 
-`tests/eval/questions.yaml` is a **29-question set authored by a lawyer**, each
-with the expected source article(s) and expected answer. `scripts/eval_retrieval.py`
-runs them against the live retrieval service and scores **recall@k with zero LLM
-calls** — it never touches generation, so it costs no API quota and isolates
-retrieval quality from the model's phrasing.
+`tests/eval/questions.yaml` is a **29-question set** whose questions and expected
+answers were **authored by a lawyer**. The expected *source articles* were derived
+afterwards — from retrieval output cross-checked against the statutory text — and
+several rows are marked low-confidence pending verification. They are a working
+ground truth, not an authoritative citation index, and the scores below should be
+read with that caveat. `scripts/eval_retrieval.py` runs the questions against the
+live retrieval service and scores **recall@k with zero LLM calls** — it never
+touches generation, so it costs no API quota and isolates retrieval quality from
+the model's phrasing.
 
 Five of the 29 questions (≈17%) are marked `expected_refusal: true`: their answers
 are agency guidance or interpretation, **not present in the statute**. The correct
@@ -193,16 +197,19 @@ retired it. On the 29-question set (same run for both):
 |---|---|---|
 | recall of the returned set | 0.77 | **0.81** (recall@16) |
 | recall at an equal top-6 window | 0.77 | 0.60 |
-| per-query latency (median) | **4.4 s** | **0.14 s** |
+| per-query latency (median) | **~4 s** | **~0.14 s** |
 | retrieval RAM | 4.00 GiB | **2.96 GiB** |
 
-The cross-encoder *does* order a short list better (0.77 vs 0.60 at top-6). But it
-was only **reordering provisions already inside the RRF top-16** — returning that
-top-16 directly scores 0.81, higher than the reranked six. Since the product shows
-a scannable list of provisions (not a single best answer), that reordering bought
-the user nothing, while costing ~30× latency and ~1 GiB of resident memory. So it
-came out. `torch` and `onnx` backends are kept behind a flag for the eval harness
-to switch back and compare.
+Recall is essentially flat across the change (~0.8 either way): the reranked
+config scored 0.77 on the latest same-day A/B and 0.81 on earlier same-set runs,
+and the no-reranker top-16 scores 0.81 — so removing the reranker does not cost
+recall of the returned list. The cross-encoder *does* order a short list better
+(0.77 vs 0.60 at top-6), but it was only **reordering provisions already inside the
+RRF top-16**; returning that top-16 directly matches it. Since the product shows a
+scannable list of provisions (not a single best answer), that reordering bought the
+user nothing, while costing ~30× latency and ~1 GiB of resident memory. So it came
+out. `torch` and `onnx` backends are kept behind a flag for the eval harness to
+switch back and compare.
 
 ### The result: a footprint that fits a 4 GB box
 
@@ -212,18 +219,30 @@ deployment, and dropping the reranker freed **~1 GiB**. Warm retrieval is
 **~0.1–0.3 s**; `rerank=0` on every query, and BGE-M3 encoding (~0.28 s cold on
 the first pass) is now the entire cost.
 
+### Concurrency
+
+Eight concurrent users on a single queue worker complete in **~4 s each**, with host
+CPU peaking around **26%**. Retrieval is ~0.3 s and generation ~2 s, so jobs drain
+fast enough that queuing is not perceptible at this scale. One observed failure
+during testing was an **upstream Gemini timeout** (`status: null`, connection never
+returned) rather than a local limit; the reliability layer surfaced clean terminal
+errors, left no orphaned Redis state, and did not double-bill.
+
 ---
 
 ## What doesn't work
 
 A list of only wins is less trustworthy than one that names the edges.
 
-- **Retrieval has genuine misses.** On the current eval set, four questions
+- **Retrieval has genuine misses.** With the reranker gone, four questions
   retrieve *none* of their expected articles even in the top 16 (Q2, Q9, Q11,
-  Q26). Two are documented in the question file as clean retrieval gaps — a
-  vocabulary mismatch (Q2), and a provision that never appears in 40 candidates
-  (Q9). These are **chunking / embedding** failures, not ranking ones: a better
-  window can't fix an article that never surfaces.
+  Q26). Q2 and Q9 are documented in the question file as clean retrieval gaps — a
+  vocabulary mismatch (Q2) and a provision that never appears in 40 candidates
+  (Q9); those are **chunking / embedding** failures a wider window can't fix. Q11
+  is a different case: the cross-encoder used to rescue it (it surfaced
+  `ZAKON-ZA-JAVNITE чл. 6` to rank 1), so the honest miss count rose from three
+  (reranked) to four when the reranker came out — the cost paid for the latency
+  and memory it saved.
 - **Part of the corpus genuinely can't answer part of the questions.** ~17% of the
   set asks for agency guidance rather than statute. Correct behaviour is refusal,
   and that is what the eval expects.
@@ -284,9 +303,13 @@ cd services/generation && python -m pytest tests -q
 **The two harnesses**
 
 ```bash
-# Retrieval quality — recall@k, no LLM calls, no API quota:
-./services/retrieval/.venv/Scripts/python.exe scripts/eval_retrieval.py run --label mine
-./services/retrieval/.venv/Scripts/python.exe scripts/eval_retrieval.py compare A.json B.json
+# Retrieval quality — recall@k, no LLM calls, no API quota.
+# Use the retrieval service's own venv (already has grpc + protobuf + the stubs):
+#   Linux/macOS: ./services/retrieval/.venv/bin/python
+#   Windows:     ./services/retrieval/.venv/Scripts/python.exe
+PY=./services/retrieval/.venv/bin/python           # Windows: .../Scripts/python.exe
+"$PY" scripts/eval_retrieval.py run --label mine
+"$PY" scripts/eval_retrieval.py compare A.json B.json
 
 # Streaming reliability against the live stack (idempotency, retries, worker
 # death, first-chunk timeout):

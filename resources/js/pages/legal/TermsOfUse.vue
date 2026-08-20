@@ -23,6 +23,8 @@ import { LEGAL_DOCUMENTS } from '@/legal/documents'
                 Содржината достапна преку Услугата служи само за информативни цели и <strong>не претставува правен
                 совет</strong>. Користењето на Услугата <strong>не создава однос адвокат–клиент</strong> ниту каков било
                 професионален однос. За совет за вашата конкретна ситуација, консултирајте квалификуван адвокат.
+                И Google, чиј API ги генерира резимеата, во своите услови наведува дека неговите услуги не треба да
+                се користат како извор на правен совет.
             </p>
 
             <h2>3. Без гаранција за точност</h2>
@@ -76,12 +78,15 @@ import { LEGAL_DOCUMENTS } from '@/legal/documents'
 
             <h2>10. Меродавно право и надлежност</h2>
             <p>
-                <span class="tbc">[СЕ ДОПОЛНУВА: меродавно право (на пр. правото на Република Северна Македонија) и надлежен суд]</span>.
+                Овие Услови се уредуваат според правото на Република Северна Македонија. Надлежни се судовите на
+                Република Северна Македонија.
+                <span class="tbc">[СЕ ДОПОЛНУВА: потврди го стварно надлежниот суд — за правен преглед]</span>.
             </p>
 
             <h2>11. Контакт</h2>
             <p>
-                <span class="tbc">[СЕ ДОПОЛНУВА: назив и е-пошта за контакт]</span>.
+                СД.
+                <span class="tbc">[СЕ ДОПОЛНУВА: контакт е-пошта]</span>.
             </p>
         </template>
 
@@ -103,6 +108,8 @@ import { LEGAL_DOCUMENTS } from '@/legal/documents'
                 Content available through the Service is for informational purposes only and <strong>does not constitute
                 legal advice</strong>. Using the Service <strong>does not create a lawyer–client relationship</strong> or
                 any professional relationship. For advice on your specific situation, consult a qualified lawyer.
+                Google, whose API generates the summaries, likewise states in its terms that its services should not
+                be relied upon for legal advice.
             </p>
 
             <h2>3. No warranty of accuracy</h2>
@@ -156,12 +163,15 @@ import { LEGAL_DOCUMENTS } from '@/legal/documents'
 
             <h2>10. Governing law and jurisdiction</h2>
             <p>
-                <span class="tbc">[TO BE COMPLETED: governing law (e.g. the law of the Republic of North Macedonia) and competent court]</span>.
+                These Terms are governed by the law of the Republic of North Macedonia. The competent courts of the
+                Republic of North Macedonia shall have jurisdiction.
+                <span class="tbc">[TO BE COMPLETED: confirm competent court — for legal review]</span>.
             </p>
 
             <h2>11. Contact</h2>
             <p>
-                <span class="tbc">[TO BE COMPLETED: name and contact email]</span>.
+                SD.
+                <span class="tbc">[TO BE COMPLETED: contact email]</span>.
             </p>
         </template>
     </LegalDocument>

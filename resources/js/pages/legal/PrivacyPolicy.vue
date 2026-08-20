@@ -14,10 +14,12 @@ import { LEGAL_DOCUMENTS } from '@/legal/documents'
 
             <h2>1. Контролор на личните податоци</h2>
             <p>
-                Контролор на збирката лични податоци е
-                <span class="tbc">[СЕ ДОПОЛНУВА: назив на правното лице/операторот, седиште и матичен број]</span>.
-                Офицер за заштита на личните податоци:
-                <span class="tbc">[СЕ ДОПОЛНУВА: име и контакт, доколку е определен]</span>.
+                Контролор на збирката лични податоци е СД, физичко лице како оператор, Република Северна
+                Македонија. Не постои регистрирано правно лице — Услугата ја обезбедува физичко лице како
+                некомерцијален проект.
+                <span class="tbc">[СЕ ДОПОЛНУВА: целосна идентификација согласно ЗЗЛП — за правен преглед]</span>.
+                Офицер за заштита на личните податоци: не е определен; Услугата не ги исполнува условите за
+                задолжително определување.
             </p>
 
             <h2>2. Кои лични податоци ги собираме</h2>
@@ -47,15 +49,21 @@ import { LEGAL_DOCUMENTS } from '@/legal/documents'
                 на Google, лоцирани во САД.
             </p>
             <p>
-                Според тековната конфигурација (бесплатното ниво на Gemini API), Google може да ја користи испратената
-                содржина — вклучувајќи ги и вашите прашања — за да ги обезбедува и подобрува своите услуги, а негови
-                проверувачи може да ја прегледаат таквата содржина. <strong>Затоа, не внесувајте лични, доверливи или
-                чувствителни податоци во прашањата.</strong>
-                <span class="tbc">[СЕ ДОПОЛНУВА: потврди го нивото на Gemini API што се користи и наведи ги важечките услови на Google за користење на податоците]</span>.
+                Услугата го користи Google Gemini API на бесплатното ниво („Unpaid Services“ — неплатени услуги).
+                Според Дополнителните услови за користење на Gemini API (во важност од 23 март 2026 година,
+                <code>https://ai.google.dev/gemini-api/terms</code>), Google ја користи содржината испратена до
+                неплатените услуги и генерираните одговори за да ги обезбедува, подобрува и развива своите производи,
+                услуги и технологии за машинско учење. Проверувачи–луѓе може да ја читаат, означуваат и обработуваат
+                содржината што влегува и излегува од API; Google наведува дека тие податоци се одвојуваат од
+                Google-сметката, API-клучот и Cloud-проектот пред прегледот. Условите на Google ги упатуваат
+                корисниците да не испраќаат чувствителни, доверливи или лични информации до неплатените услуги.
+                <strong>Не внесувајте доверливи, чувствителни или лични податоци што овозможуваат идентификација во
+                оваа Услуга.</strong>
             </p>
             <p>
-                <strong>Хостинг/инфраструктура:</strong>
-                <span class="tbc">[СЕ ДОПОЛНУВА: давател на хостинг и локација на серверите]</span>.
+                <strong>Хостинг/инфраструктура:</strong> Amazon Web Services (AWS), регион eu-north-1, Стокхолм,
+                Шведска. Податоците за сметката, историјата на разговорите и дневниците на апликацијата се чуваат во
+                рамките на Европската Унија.
                 Не продаваме лични податоци и не ги споделуваме за рекламни цели.
             </p>
 
@@ -68,10 +76,10 @@ import { LEGAL_DOCUMENTS } from '@/legal/documents'
 
             <h2>6. Рокови на чување</h2>
             <ul>
-                <li>Податоците за сметката и содржината на разговорите се чуваат додека постои вашата сметка. Во моментот, содржината на разговорите се чува неограничено додека вие не ја избришете. <span class="tbc">[СЕ ДОПОЛНУВА: конкретна политика за рокови на чување и бришење]</span>.</li>
+                <li>Податоците за сметката и содржината на разговорите се чуваат сè додека постои вашата сметка. Можете во секое време да избришете поединечни разговори или целата сметка преку страницата „Профил"; со бришењето на сметката трајно се отстрануваат сметката, разговорите, пораките и записите за дадена согласност. Нема автоматско бришење засновано на рок.</li>
                 <li>Сесиските податоци се чуваат за времетраењето на сесијата (стандардно 120 минути неактивност).</li>
                 <li>Дневниците за настани се чуваат 14 дена, по што автоматски се бришат.</li>
-                <li>Роковите на чување кај Google се уредени со условите на Google. <span class="tbc">[СЕ ДОПОЛНУВА]</span>.</li>
+                <li>Содржината испратена до Gemini API се чува согласно сопствените услови на Google и е надвор од наша контрола. Содржината испратена до неплатените услуги може да се чува и да се користи за подобрување на производите и моделите. Бришењето на вашата сметка кај нас не ја брише содржината што е веќе испратена до Google.</li>
             </ul>
 
             <h2>7. Вашите права</h2>
@@ -87,7 +95,7 @@ import { LEGAL_DOCUMENTS } from '@/legal/documents'
             <p>
                 Дел од овие права можете да ги остварите директно во апликацијата: да ги преземете вашите податоци и да
                 ја избришете сметката преку страницата „Профил". За останатите барања, контактирајте нè на
-                <span class="tbc">[СЕ ДОПОЛНУВА: е-пошта за барања поврзани со лични податоци]</span>.
+                <span class="tbc">[СЕ ДОПОЛНУВА: контакт е-пошта]</span>.
             </p>
 
             <h2>8. Колачиња (cookies)</h2>
@@ -99,14 +107,14 @@ import { LEGAL_DOCUMENTS } from '@/legal/documents'
             <h2>9. Безбедност</h2>
             <p>
                 Лозинките се чуваат во хеширана форма, а пристапот до Услугата е ограничен (регистрацијата е само со
-                покана).
-                <span class="tbc">[СЕ ДОПОЛНУВА: дополнителни технички и организациски мерки, на пр. HTTPS/криптирање]</span>.
+                покана). Дополнителни технички мерки: лозинките се хешираат со bcrypt; сесиското колаче е HTTP-only
+                со атрибут SameSite=Lax; барањата од друг сајт се заштитени со CSRF-токени; а точките за најавување,
+                регистрација и разговор имаат ограничување на бројот на барања (rate limiting).
             </p>
 
             <h2>10. Малолетни лица</h2>
             <p>
-                Услугата не е наменета за лица под
-                <span class="tbc">[СЕ ДОПОЛНУВА: возрасна граница]</span> години.
+                Услугата не е наменета за лица под 18 години.
             </p>
 
             <h2>11. Надзорен орган</h2>
@@ -124,7 +132,8 @@ import { LEGAL_DOCUMENTS } from '@/legal/documents'
 
             <h2>13. Контакт</h2>
             <p>
-                <span class="tbc">[СЕ ДОПОЛНУВА: назив, адреса и е-пошта за контакт]</span>.
+                СД, Република Северна Македонија.
+                <span class="tbc">[СЕ ДОПОЛНУВА: контакт е-пошта]</span>.
             </p>
         </template>
 
@@ -137,10 +146,12 @@ import { LEGAL_DOCUMENTS } from '@/legal/documents'
 
             <h2>1. Data controller</h2>
             <p>
-                The controller of the personal data collection is
-                <span class="tbc">[TO BE COMPLETED: name of the legal entity/operator, seat and registration number]</span>.
-                Data protection officer:
-                <span class="tbc">[TO BE COMPLETED: name and contact, if appointed]</span>.
+                The controller of the personal data collection is SD, an individual operator, Republic of North
+                Macedonia. There is no registered legal entity — the Service is operated by a natural person as a
+                non-commercial project.
+                <span class="tbc">[TO BE COMPLETED: full identification as required by ЗЗЛП — for legal review]</span>.
+                Data protection officer: none has been appointed; the Service does not meet the criteria requiring
+                one.
             </p>
 
             <h2>2. What personal data we collect</h2>
@@ -170,15 +181,19 @@ import { LEGAL_DOCUMENTS } from '@/legal/documents'
                 servers, located in the United States.
             </p>
             <p>
-                Under the current configuration (the free tier of the Gemini API), Google may use the transmitted
-                content — including your questions — to provide and improve its services, and Google reviewers may read
-                such content. <strong>For this reason, do not enter personal, confidential or sensitive data in your
-                questions.</strong>
-                <span class="tbc">[TO BE COMPLETED: confirm the Gemini API tier in use and cite Google’s current data-use terms]</span>.
+                The Service uses the Google Gemini API on the free tier (“Unpaid Services”). Under the Gemini API
+                Additional Terms of Service (effective 23 March 2026,
+                <code>https://ai.google.dev/gemini-api/terms</code>), Google uses content submitted to Unpaid
+                Services and the generated responses to provide, improve and develop Google products, services and
+                machine learning technologies. Human reviewers may read, annotate and process API input and output;
+                Google states this data is disconnected from the Google Account, API key and Cloud project before
+                review. Google’s terms direct users not to submit sensitive, confidential or personal information to
+                Unpaid Services. <strong>Do not enter confidential, sensitive or personally identifying information
+                into this Service.</strong>
             </p>
             <p>
-                <strong>Hosting/infrastructure:</strong>
-                <span class="tbc">[TO BE COMPLETED: hosting provider and server location]</span>.
+                <strong>Hosting/infrastructure:</strong> Amazon Web Services (AWS), eu-north-1 region, Stockholm,
+                Sweden. Account data, conversation history and application logs are stored within the European Union.
                 We do not sell personal data and do not share it for advertising.
             </p>
 
@@ -191,10 +206,10 @@ import { LEGAL_DOCUMENTS } from '@/legal/documents'
 
             <h2>6. Retention periods</h2>
             <ul>
-                <li>Account data and conversation content are kept while your account exists. Currently, conversation content is retained indefinitely until you delete it. <span class="tbc">[TO BE COMPLETED: concrete retention and deletion policy]</span>.</li>
+                <li>Account data and conversation content are retained for as long as your account exists. You may delete individual conversations or your entire account at any time from the “Profile” page; account deletion permanently removes your account, conversations, messages and consent records. There is no automatic time-based deletion.</li>
                 <li>Session data is kept for the duration of the session (120 minutes of inactivity by default).</li>
                 <li>Event logs are kept for 14 days and then automatically deleted.</li>
-                <li>Retention at Google is governed by Google’s terms. <span class="tbc">[TO BE COMPLETED]</span>.</li>
+                <li>Content sent to the Gemini API is retained according to Google’s own terms and is outside our control. Content submitted to Unpaid Services may be retained and used for product and model improvement. Deleting your account here does not delete content already submitted to Google.</li>
             </ul>
 
             <h2>7. Your rights</h2>
@@ -210,7 +225,7 @@ import { LEGAL_DOCUMENTS } from '@/legal/documents'
             <p>
                 Some of these rights you can exercise directly in the app: you can export your data and delete your
                 account from the “Profile” page. For other requests, contact us at
-                <span class="tbc">[TO BE COMPLETED: email for data protection requests]</span>.
+                <span class="tbc">[TO BE COMPLETED: contact email]</span>.
             </p>
 
             <h2>8. Cookies</h2>
@@ -222,14 +237,14 @@ import { LEGAL_DOCUMENTS } from '@/legal/documents'
             <h2>9. Security</h2>
             <p>
                 Passwords are stored hashed and access to the Service is restricted (registration is by invitation
-                only).
-                <span class="tbc">[TO BE COMPLETED: additional technical and organisational measures, e.g. HTTPS/encryption]</span>.
+                only). Additional technical measures: passwords are hashed with bcrypt; the session cookie is
+                HTTP-only with SameSite=Lax; cross-site requests are protected by CSRF tokens; and the login,
+                registration and chat endpoints are rate-limited.
             </p>
 
             <h2>10. Minors</h2>
             <p>
-                The Service is not intended for persons under
-                <span class="tbc">[TO BE COMPLETED: age threshold]</span> years of age.
+                The Service is not intended for persons under 18 years of age.
             </p>
 
             <h2>11. Supervisory authority</h2>
@@ -247,7 +262,8 @@ import { LEGAL_DOCUMENTS } from '@/legal/documents'
 
             <h2>13. Contact</h2>
             <p>
-                <span class="tbc">[TO BE COMPLETED: name, address and contact email]</span>.
+                SD, Republic of North Macedonia.
+                <span class="tbc">[TO BE COMPLETED: contact email]</span>.
             </p>
         </template>
     </LegalDocument>
