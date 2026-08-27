@@ -138,6 +138,41 @@ class VectorStore:
             len(self.sparse_index),
         )
 
+    def add_chunk(self, chunk: dict, dense: np.ndarray, sparse: dict[int, float]) -> None:
+        """Append one chunk to the resident store at runtime.
+
+        Used ONLY by the opt-in injection-test fixture overlay
+        ({@see app.injection_fixture}); the persisted vectors.sqlite is never
+        written. The dense vector is L2-normalized so the matmul-is-cosine
+        invariant that {@see search_dense} relies on still holds.
+        """
+        vector = np.asarray(dense, dtype=np.float32).reshape(-1)
+        if vector.shape != (self.dim,):
+            raise VectorStoreError(
+                f"overlay chunk dense vector has shape {vector.shape}, expected ({self.dim},)"
+            )
+        norm = float(np.linalg.norm(vector))
+        vector = vector / (norm or 1.0)
+
+        row_index = len(self.chunks)
+        self.dense = np.vstack([self.dense, vector]) if self.loaded else vector.reshape(1, -1)
+        self.chunks.append(
+            {
+                "id": int(chunk["id"]),
+                "unit_key": chunk.get("unit_key", ""),
+                "slug": chunk.get("slug", ""),
+                "article": chunk.get("article", ""),
+                "citation": chunk.get("citation", ""),
+                "header": chunk.get("header", ""),
+                "text": chunk.get("text", ""),
+            }
+        )
+        self._row_of_chunk[int(chunk["id"])] = row_index
+        if chunk.get("unit_key"):
+            self._rows_of_unit[chunk["unit_key"]].append(row_index)
+        for token_id, weight in sparse.items():
+            self.sparse_index[int(token_id)].append((row_index, float(weight)))
+
     def _index_sparse(self, row_index: int, raw: str) -> None:
         try:
             weights = json.loads(raw)

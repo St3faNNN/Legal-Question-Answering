@@ -115,6 +115,42 @@ mid-answer) surfaces a clean error in seconds instead of hanging the browser.
 
 ---
 
+## The research agent (a second surface)
+
+Alongside the web app there is a **command-line research agent** (`agent/`,
+hand-written TypeScript, zero runtime dependencies). It exists for the questions
+the app's single retrieval pass can't do well: multi-part questions where one
+embedding of the whole query retrieves a blur of every part — *"the authority ran
+a negotiated procedure without a notice — what are the consequences and what
+deadlines apply?"* The agent runs a **tool-calling loop**: search, read the
+passages, decide the next search, synthesise a cited answer over several steps.
+
+It is a **separate program that shares one service.** It never imports the app or
+the Python retrieval service; it reaches retrieval through thin HTTP tool
+endpoints in Laravel (`POST /api/v1/tools/search-law`, `/tools/follow-references`)
+that wrap the same `RetrievalClient` the chat path uses — so it inherits the app's
+authentication and rate limiting instead of opening a second door to retrieval.
+
+Where the two surfaces differ:
+
+| | Web app | Agent |
+|---|---|---|
+| Shape | one retrieval → one answer | a loop: search, read, decide, search again |
+| Execution | queued job, streamed to the browser over SSE | synchronous CLI, one process per invocation |
+| Auth | Sanctum **cookie** session (SPA) | Sanctum **bearer token** on the tool endpoints |
+| Reaches retrieval | gRPC (in-process client) | HTTP tool endpoints |
+| Conversation state | Redis side-channel + Postgres messages | **files** — one JSON transcript per session id |
+
+The agent is a learning surface for agent orchestration — tool design, sessions,
+context compaction, prompt injection, memory — practised against a real corpus and
+the app's evaluation harness. Its own documentation lives in
+**[`agent/README.md`](agent/README.md)** (how to run it) and
+**[`agent/agent-documentation.md`](agent/agent-documentation.md)** (the design
+decisions and what the measurements showed — including where the machinery earned
+its keep and where it did not).
+
+---
+
 ## Retrieval
 
 Each question runs through a hybrid pipeline:

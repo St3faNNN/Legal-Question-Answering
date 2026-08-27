@@ -1,0 +1,15 @@
+{
+    "name": "graphrag-legal-agent",
+    "private": true,
+    "type": "module",
+    "description": "Hand-written multi-hop legal research agent over the GraphRAG search-law tool. No agent framework, zero runtime dependencies; runs on Node's native TypeScript.",
+    "engines": {
+        "node": ">=23.6"
+    },
+    "scripts": {
+        "agent": "node src/main.ts",
+        "inspector": "node src/inspector.ts",
+        "test": "node --test",
+        "typecheck": "tsc --noEmit -p tsconfig.json"
+    }
+}

@@ -6,7 +6,9 @@ from app.citations import (
     citation_of,
     expand,
     load_citation_graph,
+    outgoing_references,
     reference_triples,
+    resolve_unit,
 )
 
 
@@ -152,3 +154,43 @@ def test_reference_triples_ignore_articles_outside_the_graph(citation_graph):
 
 def test_reference_triples_with_zero_limit(citation_graph):
     assert reference_triples(citation_graph, ["zakon-a:chlen-1"], limit=0) == []
+
+
+def test_resolve_unit_matches_law_and_article(citation_graph):
+    assert resolve_unit(citation_graph, "ZAKON-A", "1") == "zakon-a:chlen-1"
+
+
+def test_resolve_unit_is_case_insensitive_and_tolerates_a_chl_prefix(citation_graph):
+    assert resolve_unit(citation_graph, "zakon-a", "чл. 3") == "zakon-a:chlen-3"
+
+
+def test_resolve_unit_requires_both_law_and_article(citation_graph):
+    assert resolve_unit(citation_graph, "ZAKON-NEMA", "1") is None  # law not in the corpus
+    assert resolve_unit(citation_graph, "ZAKON-A", "999") is None  # article not in that law
+    assert resolve_unit(citation_graph, "", "1") is None
+
+
+def test_outgoing_references_returns_cited_articles(citation_graph):
+    references = outgoing_references(citation_graph, "zakon-a:chlen-1")
+
+    assert references == [
+        {"citation": "ZAKON-A, чл. 3", "heading": "ZAKON-A, чл. 3", "confidence": 1.0}
+    ]
+
+
+def test_outgoing_references_excludes_incoming_edges(citation_graph):
+    """chlen-3 is only cited BY chlen-1; it cites nothing, so nothing comes back."""
+    assert outgoing_references(citation_graph, "zakon-a:chlen-3") == []
+
+
+def test_outgoing_references_keeps_the_strongest_edge_per_target(citation_graph):
+    citation_graph.add_edge("zakon-a:chlen-1", "zakon-a:chlen-3", rel="internal", confidence=0.2)
+
+    references = outgoing_references(citation_graph, "zakon-a:chlen-1")
+
+    assert len(references) == 1
+    assert references[0]["confidence"] == 1.0
+
+
+def test_outgoing_references_for_unknown_article_is_empty(citation_graph):
+    assert outgoing_references(citation_graph, "nema:chlen-1") == []

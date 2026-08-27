@@ -21,6 +21,11 @@ class RetrievalStub(object):
                 request_serializer=retrieval__pb2.RetrieveRequest.SerializeToString,
                 response_deserializer=retrieval__pb2.RetrieveResponse.FromString,
                 )
+        self.References = channel.unary_unary(
+                '/graphrag.retrieval.v1.Retrieval/References',
+                request_serializer=retrieval__pb2.ReferencesRequest.SerializeToString,
+                response_deserializer=retrieval__pb2.ReferencesResponse.FromString,
+                )
 
 
 class RetrievalServicer(object):
@@ -34,6 +39,14 @@ class RetrievalServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def References(self, request, context):
+        """Outgoing citations of a single article: the articles it points at
+        ("as defined in Article 28…"). Pure graph traversal, no vector search.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_RetrievalServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -41,6 +54,11 @@ def add_RetrievalServicer_to_server(servicer, server):
                     servicer.Retrieve,
                     request_deserializer=retrieval__pb2.RetrieveRequest.FromString,
                     response_serializer=retrieval__pb2.RetrieveResponse.SerializeToString,
+            ),
+            'References': grpc.unary_unary_rpc_method_handler(
+                    servicer.References,
+                    request_deserializer=retrieval__pb2.ReferencesRequest.FromString,
+                    response_serializer=retrieval__pb2.ReferencesResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -68,5 +86,22 @@ class Retrieval(object):
         return grpc.experimental.unary_unary(request, target, '/graphrag.retrieval.v1.Retrieval/Retrieve',
             retrieval__pb2.RetrieveRequest.SerializeToString,
             retrieval__pb2.RetrieveResponse.FromString,
+            options, channel_credentials,
+            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
+
+    @staticmethod
+    def References(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/graphrag.retrieval.v1.Retrieval/References',
+            retrieval__pb2.ReferencesRequest.SerializeToString,
+            retrieval__pb2.ReferencesResponse.FromString,
             options, channel_credentials,
             insecure, call_credentials, compression, wait_for_ready, timeout, metadata)

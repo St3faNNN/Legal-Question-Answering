@@ -3,6 +3,8 @@
 namespace App\Grpc;
 
 use App\Exceptions\AiServiceException;
+use App\Grpc\Pb\Retrieval\ReferencesRequest;
+use App\Grpc\Pb\Retrieval\ReferencesResponse;
 use App\Grpc\Pb\Retrieval\RetrievalClient as RetrievalStub;
 use App\Grpc\Pb\Retrieval\RetrieveRequest;
 use App\Grpc\Pb\Retrieval\RetrieveResponse;
@@ -63,6 +65,35 @@ class GrpcRetrievalClient implements RetrievalClient
             ),
             'context_items' => $response->getContextItems(),
             'latency_ms' => $response->getLatencyMs(),
+        ];
+    }
+
+    public function references(string $law, string $article): array
+    {
+        $request = (new ReferencesRequest)->setLaw($law)->setArticle($article);
+
+        /** @var array{0: ?ReferencesResponse, 1: object} $result */
+        $result = $this->stub
+            ->References($request, [], ['timeout' => $this->timeout * 1_000_000])
+            ->wait();
+
+        [$response, $status] = $result;
+
+        if ($status->code !== \Grpc\STATUS_OK || $response === null) {
+            throw $this->mapStatus($status);
+        }
+
+        return [
+            'found' => $response->getFound(),
+            'source_citation' => $response->getSourceCitation(),
+            'references' => array_map(
+                fn ($reference): array => [
+                    'citation' => $reference->getCitation(),
+                    'heading' => $reference->getHeading(),
+                    'confidence' => $reference->getConfidence(),
+                ],
+                iterator_to_array($response->getReferences()),
+            ),
         ];
     }
 

@@ -8,6 +8,7 @@ use App\Grpc\RetrievalClient;
 use App\Models\Conversation;
 use App\Models\Message;
 use App\Services\Chat\Concerns\ComposesGraphRagReply;
+use App\Services\Chat\NonLegalInputGate;
 use App\Services\Logging\AiLogger;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -111,7 +112,7 @@ class StreamChatReply implements ShouldQueue
         $this->timeout = (int) config('ai.retrieval_timeout') + $generationDeadline + self::TIMEOUT_MARGIN_SECONDS;
     }
 
-    public function handle(RetrievalClient $retrieval, GenerationClient $generation, AiLogger $logger): void
+    public function handle(RetrievalClient $retrieval, GenerationClient $generation, AiLogger $logger, NonLegalInputGate $gate): void
     {
         // Idempotency guard. A prior execution of this stream may have already
         // run generation — a manual requeue, an operator re-dispatch, or a retry
@@ -129,6 +130,17 @@ class StreamChatReply implements ShouldQueue
 
         $key = self::channelKey($this->streamId);
         $start = hrtime(true);
+
+        // Non-legal input (greetings, small talk, empty) is answered from a canned
+        // bilingual message with NO retrieval, graph expansion or LLM call. Emitted
+        // like any reply — one chunk, persisted message, done — so the browser and
+        // history are unaffected. Narrow by design (see NonLegalInputGate); a terse
+        // real query still runs the full pipeline.
+        if ($gate->shouldGate($this->userMessage)) {
+            $this->emitGatedReply($key, $gate, $logger);
+
+            return;
+        }
 
         // Retry phase gate: a failure BEFORE the first token has sent nothing to
         // the client and billed no output, so it is re-thrown for the queue to
@@ -278,6 +290,48 @@ class StreamChatReply implements ShouldQueue
             // retries. failed() runs only once $tries is exhausted.
             throw $exception;
         }
+    }
+
+    /**
+     * Emit a gated (non-legal) reply through the stream: the canned message as a
+     * single chunk, a persisted assistant Message (so history/reloads work and
+     * the idempotency guard sees it), then a `done` with empty passages. No
+     * retrieval, no generation — so nothing billed and no retry logic needed.
+     */
+    private function emitGatedReply(string $key, NonLegalInputGate $gate, AiLogger $logger): void
+    {
+        $payload = $gate->gatedPayload();
+
+        $this->publish($key, ['type' => 'chunk', 'text' => $payload['answer']]);
+
+        $conversation = Conversation::findOrFail($this->conversationId);
+        /** @var Message $message */
+        $message = $conversation->messages()->create([
+            'role' => 'assistant',
+            'stream_id' => $this->streamId,
+            'content' => $payload['answer'],
+            'model' => null,
+            'tokens' => 0,
+            'latency_ms' => 0,
+            'metadata' => $payload['metadata'],
+        ]);
+
+        $logger->info('graphrag.input_gated', [
+            'stream_id' => $this->streamId,
+            'conversation_id' => $this->conversationId,
+        ]);
+
+        $this->publish($key, [
+            'type' => 'done',
+            'message_id' => $message->id,
+            'model' => null,
+            'tokens' => 0,
+            'retrieval_ms' => 0,
+            'ttft_ms' => 0,
+            'total_ms' => 0,
+            'top_triples' => [],
+            'top_chunks' => [],
+        ]);
     }
 
     /**

@@ -25,11 +25,21 @@ class GraphRagGrpcReplyGenerator implements GeneratesReplies
         private readonly RetrievalClient $retrieval,
         private readonly GenerationClient $generation,
         private readonly AiLogger $logger,
+        private readonly NonLegalInputGate $gate,
     ) {}
 
     public function reply(Conversation $conversation, string $userMessage): array
     {
         $start = hrtime(true);
+
+        // Short-circuit non-legal input (greetings, small talk, empty) before any
+        // embedding, search, graph expansion or LLM call. Narrow by design; a
+        // terse real query still reaches retrieval. See NonLegalInputGate.
+        if ($this->gate->shouldGate($userMessage)) {
+            $this->logger->info('graphrag.input_gated', ['conversation_id' => $conversation->getKey()]);
+
+            return $this->gate->gatedPayload();
+        }
 
         $retrieval = $this->retrieval->retrieve($userMessage);
 

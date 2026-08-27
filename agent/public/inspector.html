@@ -1,0 +1,270 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Agent trace inspector</title>
+    <style>
+        :root {
+            --bg: #f6f7f9; --panel: #ffffff; --ink: #1a1c1f; --muted: #6b7280;
+            --line: #e4e7eb; --accent: #4f46e5; --tool: #0369a1; --ok: #047857;
+            --warn: #b45309; --err: #b91c1c; --code: #f2f3f5;
+        }
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --bg: #0f1115; --panel: #171a21; --ink: #e6e8eb; --muted: #9aa3af;
+                --line: #262b34; --accent: #a5b4fc; --tool: #7dd3fc; --ok: #6ee7b7;
+                --warn: #fcd34d; --err: #fca5a5; --code: #11141a;
+            }
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0; background: var(--bg); color: var(--ink);
+            font: 14px/1.55 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+        }
+        code, pre, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+        .wrap { max-width: 960px; margin: 0 auto; padding: 24px 20px 80px; }
+        h1 { font-size: 17px; margin: 0 0 4px; }
+        .sub { color: var(--muted); margin: 0 0 20px; font-size: 13px; }
+        .bar { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+        input[type=text] {
+            flex: 1; min-width: 220px; padding: 8px 10px; border: 1px solid var(--line);
+            border-radius: 8px; background: var(--panel); color: var(--ink); font-size: 13px;
+        }
+        button {
+            padding: 8px 14px; border: 1px solid var(--line); border-radius: 8px;
+            background: var(--panel); color: var(--ink); cursor: pointer; font-size: 13px;
+        }
+        button:hover { border-color: var(--accent); }
+        .recent { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 20px; }
+        .recent a {
+            font-size: 12px; color: var(--muted); text-decoration: none;
+            border: 1px solid var(--line); border-radius: 999px; padding: 2px 9px;
+        }
+        .recent a:hover { color: var(--accent); border-color: var(--accent); }
+        .meta {
+            background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+            padding: 14px 16px; margin-bottom: 18px;
+        }
+        .meta .q { font-weight: 600; margin-bottom: 8px; }
+        .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+        .chip {
+            font-size: 12px; color: var(--muted); background: var(--code);
+            border-radius: 6px; padding: 2px 8px;
+        }
+        .chip b { color: var(--ink); font-weight: 600; }
+        .badge { font-weight: 600; }
+        .badge.answered { color: var(--ok); }
+        .badge.exhausted { color: var(--err); }
+        .badge.running { color: var(--warn); }
+        .step { border-left: 2px solid var(--line); padding: 0 0 18px 16px; margin-left: 6px; position: relative; }
+        .step::before {
+            content: ''; position: absolute; left: -6px; top: 4px; width: 10px; height: 10px;
+            border-radius: 50%; background: var(--accent);
+        }
+        .step-head { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+        .step-title { font-weight: 600; }
+        .step-timing { color: var(--muted); font-size: 12px; white-space: nowrap; }
+        .reasoning { color: var(--muted); white-space: pre-wrap; margin: 6px 0; }
+        .call { color: var(--tool); margin: 8px 0 4px; }
+        .call .fn { font-weight: 600; }
+        details {
+            background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+            padding: 6px 10px; margin: 4px 0 2px;
+        }
+        summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+        .passage { border-top: 1px dashed var(--line); padding: 8px 0; }
+        .passage:first-of-type { border-top: 0; }
+        .passage .src { font-weight: 600; color: var(--tool); }
+        .passage .score { color: var(--muted); font-size: 12px; }
+        .passage .txt { white-space: pre-wrap; margin-top: 3px; }
+        .answer {
+            background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--ok);
+            border-radius: 8px; padding: 12px 14px; white-space: pre-wrap; margin-top: 6px;
+        }
+        .err { color: var(--err); }
+        pre.raw { white-space: pre-wrap; word-break: break-word; background: var(--code); border-radius: 6px; padding: 8px; margin: 4px 0 0; font-size: 12px; }
+        .empty { color: var(--muted); padding: 40px 0; text-align: center; }
+    </style>
+</head>
+<body>
+    <div class="wrap">
+        <h1>Agent trace inspector</h1>
+        <p class="sub">Read a run's trajectory: did it decompose the question into several searches, or search once and answer?</p>
+
+        <div class="bar">
+            <input id="runInput" type="text" placeholder="run id, e.g. 20260825-143000-a1b2c3" spellcheck="false" />
+            <button id="loadBtn">Load</button>
+            <button id="refreshBtn" title="Refresh the recent list">Recent ⟳</button>
+        </div>
+        <div class="recent" id="recent"></div>
+
+        <div id="view"><div class="empty">Enter a run id above, or pick a recent run.</div></div>
+    </div>
+
+    <script>
+        const view = document.getElementById('view')
+        const recent = document.getElementById('recent')
+        const runInput = document.getElementById('runInput')
+
+        function esc(value) {
+            return String(value == null ? '' : value)
+                .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
+        }
+
+        function argSummary(argsJson) {
+            try {
+                const a = JSON.parse(argsJson)
+                if (a.query != null) { return a.query }
+                if (a.law != null || a.article != null) { return (a.law || '') + ' чл. ' + (a.article || '') }
+                return argsJson
+            } catch { return argsJson }
+        }
+
+        function renderToolResult(result) {
+            // search_law: { query, count, results: [{ id, source, text, score }] }.
+            if (result && Array.isArray(result.results)) {
+                if (result.results.length === 0) {
+                    return '<div class="err">no passages returned</div>'
+                }
+                return result.results.map((p) =>
+                    '<div class="passage">'
+                    + '<span class="src">' + esc(p.source) + '</span> '
+                    + '<span class="score">score ' + esc(typeof p.score === 'number' ? p.score.toFixed(3) : p.score)
+                    + ' · id ' + esc(p.id) + '</span>'
+                    + '<div class="txt">' + esc(p.text) + '</div>'
+                    + '</div>'
+                ).join('')
+            }
+            // follow_references: { found, source_citation, count, references: [{ citation, heading, confidence }] }.
+            if (result && Array.isArray(result.references)) {
+                if (result.found === false) {
+                    return '<div class="err">article not in corpus</div>'
+                }
+                if (result.references.length === 0) {
+                    return '<div class="err">no outgoing references</div>'
+                }
+                return result.references.map((r) =>
+                    '<div class="passage">'
+                    + '<span class="src">' + esc(r.citation) + '</span> '
+                    + '<span class="score">conf ' + esc(typeof r.confidence === 'number' ? r.confidence.toFixed(2) : r.confidence) + '</span>'
+                    + '<div class="txt">' + esc(r.heading || '(no heading)') + '</div>'
+                    + '</div>'
+                ).join('')
+            }
+            if (result && result.error) {
+                return '<div class="err">error: ' + esc(result.error)
+                    + (result.status ? ' (HTTP ' + esc(result.status) + ')' : '') + '</div>'
+            }
+            return '<pre class="raw">' + esc(JSON.stringify(result, null, 2)) + '</pre>'
+        }
+
+        function summarise(result) {
+            if (result && Array.isArray(result.results)) {
+                return 'tool result: ' + result.results.length + ' passage(s)'
+            }
+            if (result && Array.isArray(result.references)) {
+                return result.found === false
+                    ? 'tool result: article not in corpus'
+                    : 'tool result: ' + result.references.length + ' reference(s)'
+            }
+            if (result && result.error) { return 'tool result: error' }
+            return 'tool result'
+        }
+
+        function renderRun(run) {
+            let cumulativeTokens = 0
+            const badgeClass = run.outcome
+            const parts = []
+
+            parts.push('<div class="meta">'
+                + '<div class="q">' + esc(run.question) + '</div>'
+                + '<div class="chips">'
+                + '<span class="chip">outcome <span class="badge ' + badgeClass + '">' + esc(run.outcome) + '</span></span>'
+                + '<span class="chip"><b>' + run.steps.length + '</b> steps</span>'
+                + '<span class="chip"><b>' + run.totals.apiCalls + '</b> Gemini calls</span>'
+                + '<span class="chip"><b>' + run.totals.totalTokens + '</b> tokens</span>'
+                + '<span class="chip">model <b>' + esc(run.model) + '</b></span>'
+                + '<span class="chip">' + esc(run.runId) + '</span>'
+                + '</div></div>')
+
+            for (const step of run.steps) {
+                const stepTokens = step.usage ? (step.usage.total_tokens || 0) : 0
+                cumulativeTokens += stepTokens
+                const hasCalls = step.assistant.tool_calls && step.assistant.tool_calls.length > 0
+
+                let block = '<div class="step">'
+                block += '<div class="step-head"><span class="step-title">step ' + step.index
+                    + ' · ' + (hasCalls ? 'tool call' : 'final answer') + '</span>'
+                    + '<span class="step-timing">' + step.durationMs + ' ms · +' + stepTokens
+                    + ' tok (Σ ' + cumulativeTokens + ')</span></div>'
+
+                if (hasCalls && step.assistant.content) {
+                    block += '<div class="reasoning">' + esc(step.assistant.content) + '</div>'
+                }
+
+                if (hasCalls) {
+                    for (const call of step.assistant.tool_calls) {
+                        const match = step.toolResults.find((r) => r.tool_call_id === call.id)
+                        block += '<div class="call">→ <span class="fn">' + esc(call.function.name)
+                            + '</span>(&#8220;' + esc(argSummary(call.function.arguments)) + '&#8221;)</div>'
+                        if (match) {
+                            block += '<details><summary>' + esc(summarise(match.result)) + '</summary>'
+                                + renderToolResult(match.result) + '</details>'
+                        } else {
+                            block += '<div class="err">no matching tool result recorded</div>'
+                        }
+                    }
+                } else {
+                    block += '<div class="answer">' + esc(step.assistant.content || '(empty)') + '</div>'
+                }
+
+                block += '</div>'
+                parts.push(block)
+            }
+
+            if (run.outcome === 'exhausted') {
+                parts.push('<div class="step"><div class="answer err">Step budget exhausted after '
+                    + run.maxSteps + ' steps. Out-of-scope fallback returned:<br>'
+                    + esc(run.finalAnswer || '') + '</div></div>')
+            }
+
+            view.innerHTML = parts.join('')
+        }
+
+        async function load(id) {
+            if (!id) { return }
+            runInput.value = id
+            if (location.hash.slice(1) !== id) { location.hash = id }
+            view.innerHTML = '<div class="empty">Loading…</div>'
+            try {
+                const res = await fetch('/api/run?id=' + encodeURIComponent(id))
+                if (!res.ok) { view.innerHTML = '<div class="empty err">run not found: ' + esc(id) + '</div>'; return }
+                renderRun(await res.json())
+            } catch (e) {
+                view.innerHTML = '<div class="empty err">' + esc(String(e)) + '</div>'
+            }
+        }
+
+        async function loadRecent() {
+            try {
+                const res = await fetch('/api/runs')
+                const data = await res.json()
+                recent.innerHTML = (data.runs || []).slice(0, 20)
+                    .map((id) => '<a href="#' + esc(id) + '">' + esc(id) + '</a>').join('')
+                    || '<span class="chip">no runs yet</span>'
+            } catch {
+                recent.innerHTML = '<span class="chip">could not list runs</span>'
+            }
+        }
+
+        document.getElementById('loadBtn').addEventListener('click', () => load(runInput.value.trim()))
+        document.getElementById('refreshBtn').addEventListener('click', loadRecent)
+        runInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { load(runInput.value.trim()) } })
+        window.addEventListener('hashchange', () => load(location.hash.slice(1)))
+
+        loadRecent()
+        if (location.hash.slice(1)) { load(location.hash.slice(1)) }
+    </script>
+</body>
+</html>

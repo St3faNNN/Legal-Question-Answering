@@ -137,3 +137,51 @@ def test_store_is_opened_read_only(store, vector_db_path):
     with pytest.raises(sqlite3.OperationalError):
         connection.execute("DELETE FROM chunks")
     connection.close()
+
+
+# --- add_chunk: the runtime overlay used by the injection-test fixture --------
+
+
+def test_add_chunk_appends_a_searchable_row(store):
+    before = len(store.chunks)
+    store.add_chunk(
+        {
+            "id": 990001,
+            "unit_key": "zakon-test:chlen-999",
+            "citation": "ЗАКОН-ТЕСТ, чл. 999",
+            "header": "Тест",
+            "text": "инјекција",
+        },
+        np.array([0.0, 0.0, 0.6, 0.8], dtype=np.float32),  # a direction no corpus chunk occupies
+        {99999: 2.0},
+    )
+
+    assert len(store.chunks) == before + 1
+
+    dense_hit = store.search_dense(np.array([0.0, 0.0, 0.6, 0.8], dtype=np.float32), k=1)[0]
+    assert dense_hit.citation == "ЗАКОН-ТЕСТ, чл. 999"
+    assert dense_hit.text == "инјекција"
+    assert dense_hit.score == pytest.approx(1.0)
+
+    sparse_hit = store.search_sparse({99999: 1.0}, k=1)[0]
+    assert sparse_hit.citation == "ЗАКОН-ТЕСТ, чл. 999"
+
+
+def test_add_chunk_normalizes_the_dense_vector(store):
+    store.add_chunk(
+        {"id": 990002, "citation": "ЗАКОН-ТЕСТ, чл. 998", "text": "x"},
+        np.array([0.0, 0.0, 1.8, 2.4], dtype=np.float32),  # magnitude 3, direction [0,0,0.6,0.8]
+        {},
+    )
+
+    hit = store.search_dense(np.array([0.0, 0.0, 0.6, 0.8], dtype=np.float32), k=1)[0]
+    assert hit.score == pytest.approx(1.0)  # cosine, so magnitude does not inflate it
+
+
+def test_add_chunk_rejects_a_wrong_dimension_vector(store):
+    with pytest.raises(VectorStoreError, match="dense vector"):
+        store.add_chunk(
+            {"id": 990003, "citation": "x", "text": "y"},
+            np.array([1.0, 0.0], dtype=np.float32),
+            {},
+        )

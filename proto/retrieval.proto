@@ -9,10 +9,39 @@ option php_metadata_namespace = "App\\Grpc\\Pb\\Retrieval\\GPBMetadata";
 // context out. No language generation, no knowledge of users or conversations.
 service Retrieval {
   rpc Retrieve(RetrieveRequest) returns (RetrieveResponse);
+  // Outgoing citations of a single article: the articles it points at
+  // ("as defined in Article 28…"). Pure graph traversal, no vector search.
+  rpc References(ReferencesRequest) returns (ReferencesResponse);
 }
 
 message RetrieveRequest {
   string question = 1;
+}
+
+// A request to follow one article's outgoing cross-references. `law` matches an
+// article node's short document code (the part before the comma in a citation,
+// e.g. "ZAKON-ZA-JAVNITE"); `article` is the article number (e.g. "181").
+message ReferencesRequest {
+  string law = 1;
+  string article = 2;
+}
+
+// One article the queried article cites. Identifier-only by design: `citation`
+// to cite and to feed a follow-up search, `heading` as a cheap label of what it
+// is about, `confidence` of the parsed cross-reference. No body text — see the
+// tool's rationale.
+message Reference {
+  string citation = 1;
+  string heading = 2;
+  double confidence = 3;
+}
+
+message ReferencesResponse {
+  // Whether the (law, article) resolved to a node in the citation graph.
+  bool found = 1;
+  // The resolved citation of the queried article, echoed back.
+  string source_citation = 2;
+  repeated Reference references = 3;
 }
 
 message Triple {

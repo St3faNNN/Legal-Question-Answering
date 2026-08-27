@@ -63,6 +63,69 @@ def citation_of(graph: nx.MultiDiGraph, unit_key: str) -> str:
     return data.get("citation") or unit_key
 
 
+def resolve_unit(graph: nx.MultiDiGraph, law: str, article: str) -> str | None:
+    """Resolve a (law, article) pair to a graph node id.
+
+    `law` is matched against the node's short document code (the ``doc``
+    attribute, e.g. "ZAKON-ZA-JAVNITE" — the part before the comma in a
+    citation), case-insensitively; `article` against the ``article`` attribute.
+    Article numbers repeat across laws, so both must match. Returns None when
+    nothing matches, so the caller can report "not found" rather than guess.
+    """
+    law_norm = law.strip().upper()
+    article_norm = article.strip().lstrip("чл.").strip()
+    if not law_norm or not article_norm:
+        return None
+
+    for node, data in graph.nodes(data=True):
+        # Prefer the node's own `article` attribute; fall back to the number in
+        # the canonical unit_key ("{slug}:chlen-{number}") when it is absent.
+        node_article = str(data.get("article", "")).strip() or _article_from_key(node)
+        if node_article != article_norm:
+            continue
+        doc = str(data.get("doc", "")).strip().upper()
+        citation = str(data.get("citation", "")).strip().upper()
+        if doc == law_norm or citation.startswith(law_norm):
+            return node
+
+    return None
+
+
+def _article_from_key(unit_key: str) -> str:
+    marker = ":chlen-"
+    index = unit_key.rfind(marker)
+
+    return unit_key[index + len(marker):] if index != -1 else ""
+
+
+def outgoing_references(graph: nx.MultiDiGraph, unit_key: str, limit: int = 50) -> list[dict]:
+    """The articles `unit_key` cites — its outgoing citation edges only.
+
+    Identifier-only by design: each row is the target's citation, its heading
+    (a short label of what the article is about, not its body text) and the
+    parsed cross-reference confidence. Deduped to the strongest edge per target,
+    strongest first.
+    """
+    if unit_key not in graph or limit <= 0:
+        return []
+
+    best: dict[str, float] = {}
+    for _source, target, data in graph.out_edges(unit_key, data=True):
+        confidence = float(data.get("confidence", 0.0))
+        if confidence > best.get(target, -1.0):
+            best[target] = confidence
+
+    ranked = sorted(best.items(), key=lambda item: -item[1])[:limit]
+    return [
+        {
+            "citation": citation_of(graph, target),
+            "heading": str(graph.nodes[target].get("heading", "")),
+            "confidence": confidence,
+        }
+        for target, confidence in ranked
+    ]
+
+
 def expand(
     graph: nx.MultiDiGraph,
     seed_units: list[str],

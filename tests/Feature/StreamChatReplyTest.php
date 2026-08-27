@@ -7,6 +7,7 @@ use App\Http\Controllers\Api\V1\ChatController;
 use App\Jobs\StreamChatReply;
 use App\Models\Conversation;
 use App\Models\User;
+use App\Services\Chat\NonLegalInputGate;
 use App\Services\Logging\AiLogger;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Redis;
@@ -24,6 +25,11 @@ function bindStreamingRetrieval(Closure $handler): void
         public function retrieve(string $question): array
         {
             return ($this->handler)($question);
+        }
+
+        public function references(string $law, string $article): array
+        {
+            return ['found' => false, 'source_citation' => '', 'references' => []];
         }
     });
 }
@@ -89,6 +95,7 @@ describe('StreamChatReply job', function (): void {
             app(RetrievalClient::class),
             app(GenerationClient::class),
             app(AiLogger::class),
+            app(NonLegalInputGate::class),
         );
 
         $message = $conversation->messages()->where('role', 'assistant')->first();
@@ -145,6 +152,7 @@ describe('StreamChatReply job', function (): void {
             app(RetrievalClient::class),
             app(GenerationClient::class),
             app(AiLogger::class),
+            app(NonLegalInputGate::class),
         );
 
         $done = collect($published)->firstWhere('type', 'done');
@@ -178,6 +186,7 @@ describe('StreamChatReply job', function (): void {
             app(RetrievalClient::class),
             app(GenerationClient::class),
             app(AiLogger::class),
+            app(NonLegalInputGate::class),
         );
 
         $statuses = collect($published)->where('type', 'status')->values();
@@ -188,6 +197,43 @@ describe('StreamChatReply job', function (): void {
             ->and($published[0]['stage'])->toBe('retrieving')
             ->and($statuses->pluck('stage')->all())->toBe(['retrieving', 'generating'])
             ->and($statuses->last()['chunk_count'])->toBe(1);
+    });
+
+    it('gates non-legal input in the stream with no retrieval or generation', function (): void {
+        $user = User::factory()->create();
+        $conversation = Conversation::factory()->for($user)->create();
+
+        bindStreamingRetrieval(function (): array {
+            throw new RuntimeException('retrieval must not run for gated input');
+        });
+        bindStreamingGeneration(function (): iterable {
+            throw new RuntimeException('generation must not run for gated input');
+        });
+
+        $published = [];
+        Redis::shouldReceive('rpush')->andReturnUsing(function (string $key, string $json) use (&$published): int {
+            $published[] = json_decode($json, true);
+
+            return 1;
+        });
+        Redis::shouldReceive('expire')->andReturnTrue();
+        Redis::shouldReceive('exists')->andReturn(0);
+
+        (new StreamChatReply($conversation->id, 'stream-gate', 'Kako si', microtime(true)))->handle(
+            app(RetrievalClient::class),
+            app(GenerationClient::class),
+            app(AiLogger::class),
+            app(NonLegalInputGate::class),
+        );
+
+        // No 'status' events (retrieving/generating) — just the canned answer and done.
+        expect(collect($published)->pluck('type')->all())->toBe(['chunk', 'done']);
+
+        $message = $conversation->messages()->where('role', 'assistant')->first();
+        expect($message)->not->toBeNull()
+            ->and($message->metadata['gated'])->toBeTrue()
+            ->and($message->metadata['top_chunks'])->toBe([])
+            ->and($message->content)->toContain('правни прашања');
     });
 
     it('announces the retrieving stage, then lets the failure propagate to be recorded', function (): void {
@@ -219,6 +265,7 @@ describe('StreamChatReply job', function (): void {
             app(RetrievalClient::class),
             app(GenerationClient::class),
             app(AiLogger::class),
+            app(NonLegalInputGate::class),
         ))->toThrow(AiServiceException::class);
 
         expect(collect($published)->pluck('type')->all())->toBe(['status']);
@@ -248,6 +295,7 @@ describe('StreamChatReply job', function (): void {
             app(RetrievalClient::class),
             app(GenerationClient::class),
             app(AiLogger::class),
+            app(NonLegalInputGate::class),
         ))->toThrow(AiServiceException::class);
 
         expect($conversation->messages()->where('role', 'assistant')->count())->toBe(0);
@@ -365,7 +413,7 @@ describe('StreamChatReply job', function (): void {
         // rather than re-thrown, so the queue never retries and replays billed
         // tokens. ($this->fail() no-ops without a queue Job in a unit context, so
         // handle() simply returns instead of throwing.)
-        $job->handle(app(RetrievalClient::class), app(GenerationClient::class), app(AiLogger::class));
+        $job->handle(app(RetrievalClient::class), app(GenerationClient::class), app(AiLogger::class), app(NonLegalInputGate::class));
 
         expect(collect($published)->where('type', 'chunk')->pluck('text')->all())->toBe(['Почеток '])
             ->and($conversation->messages()->where('role', 'assistant')->count())->toBe(0);
@@ -399,7 +447,7 @@ describe('StreamChatReply job', function (): void {
         Redis::shouldReceive('setex')->andReturnTrue();
 
         $job = new StreamChatReply($conversation->id, 'stream-dup', 'Прашање?', microtime(true));
-        $job->handle(app(RetrievalClient::class), app(GenerationClient::class), app(AiLogger::class));
+        $job->handle(app(RetrievalClient::class), app(GenerationClient::class), app(AiLogger::class), app(NonLegalInputGate::class));
 
         // Returned before the retrieving status, and no second message created.
         expect($published)->toBeEmpty()
@@ -430,7 +478,7 @@ describe('StreamChatReply job', function (): void {
             ->andReturn(1);
 
         $job = new StreamChatReply($conversation->id, 'stream-marked', 'Прашање?', microtime(true));
-        $job->handle(app(RetrievalClient::class), app(GenerationClient::class), app(AiLogger::class));
+        $job->handle(app(RetrievalClient::class), app(GenerationClient::class), app(AiLogger::class), app(NonLegalInputGate::class));
 
         expect($published)->toBeEmpty()
             ->and($conversation->messages()->where('role', 'assistant')->count())->toBe(0);

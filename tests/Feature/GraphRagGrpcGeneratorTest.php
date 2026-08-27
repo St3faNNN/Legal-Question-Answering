@@ -27,6 +27,11 @@ function bindRetrievalClient(Closure $handler): void
         {
             return ($this->handler)($question);
         }
+
+        public function references(string $law, string $article): array
+        {
+            return ['found' => false, 'source_citation' => '', 'references' => []];
+        }
     });
 }
 
@@ -313,7 +318,9 @@ describe('GraphRAG gRPC chat flow', function (): void {
         $user = User::factory()->create();
         actingAs($user);
 
-        postJson('/api/v1/chat', ['message' => 'Hello'])
+        // A real legal question so the pipeline runs (the gate lets it through)
+        // and the generation failure surfaces — a greeting would be short-circuited.
+        postJson('/api/v1/chat', ['message' => 'Колку е работното време?'])
             ->assertServiceUnavailable()
             ->assertJsonPath('error.service', 'generation')
             ->assertJsonPath('error.reason', 'invalid_response');

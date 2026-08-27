@@ -21,7 +21,14 @@ from typing import TYPE_CHECKING
 import grpc
 from grpc_health.v1 import health, health_pb2, health_pb2_grpc
 
-from .citations import citation_of, expand, load_citation_graph, reference_triples
+from .citations import (
+    citation_of,
+    expand,
+    load_citation_graph,
+    outgoing_references,
+    reference_triples,
+    resolve_unit,
+)
 from .config import Settings, get_settings
 from .fusion import Candidate, pack_context, reciprocal_rank_fusion
 from .pb import retrieval_pb2, retrieval_pb2_grpc
@@ -143,6 +150,23 @@ class RetrievalContext:
                 for candidate in top
             ],
             "latency_ms": latency_ms,
+        }
+
+    def references(self, law: str, article: str) -> dict:
+        """Outgoing citations of one article, resolved from (law, article).
+
+        Pure graph traversal — no embedding, no vector search — so it is cheap
+        and deterministic. Returns found=False (not an error) when the article
+        is not in the corpus, letting the caller say so plainly.
+        """
+        unit_key = resolve_unit(self.graph, law, article)
+        if unit_key is None:
+            return {"found": False, "source_citation": "", "references": []}
+
+        return {
+            "found": True,
+            "source_citation": citation_of(self.graph, unit_key),
+            "references": outgoing_references(self.graph, unit_key),
         }
 
     def _expand(self, vector_ranking: list[Candidate]) -> list[Candidate]:
@@ -283,6 +307,15 @@ def build_context(settings: Settings) -> RetrievalContext:
     )
     embedder.load()
 
+    # Opt-in prompt-injection test overlay. Off unless INJECTION_FIXTURE_PATH is
+    # set (production and the eval harness never set it). Appends test chunks to
+    # the in-memory store only; vectors.sqlite is untouched.
+    fixture_path = os.environ.get("INJECTION_FIXTURE_PATH", "").strip()
+    if fixture_path:
+        from .injection_fixture import load_injection_fixture
+
+        load_injection_fixture(store, embedder, fixture_path)
+
     if store.embed_model and store.embed_model != settings.embed_model_path:
         # Query and document vectors must come from the same model or cosine
         # similarity between them is meaningless.
@@ -317,6 +350,17 @@ class RetrievalServicer(retrieval_pb2_grpc.RetrievalServicer):
             chunks=[retrieval_pb2.Chunk(**chunk) for chunk in result["chunks"]],
             context_items=result["context_items"],
             latency_ms=result["latency_ms"],
+        )
+
+    def References(self, request, grpc_context):
+        if not request.law or not request.law.strip() or not request.article or not request.article.strip():
+            grpc_context.abort(grpc.StatusCode.INVALID_ARGUMENT, "law and article must not be empty")
+
+        result = self._context.references(request.law, request.article)
+        return retrieval_pb2.ReferencesResponse(
+            found=result["found"],
+            source_citation=result["source_citation"],
+            references=[retrieval_pb2.Reference(**reference) for reference in result["references"]],
         )
 
 

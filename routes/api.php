@@ -11,6 +11,7 @@ use App\Http\Controllers\Api\V1\NewsController;
 use App\Http\Controllers\Api\V1\SettingsController;
 use App\Http\Controllers\Api\V1\TodoItemController;
 use App\Http\Controllers\Api\V1\TodoListController;
+use App\Http\Controllers\Api\V1\ToolController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
@@ -85,6 +86,13 @@ Route::prefix('v1')->group(function (): void {
     // Newspaper section — latest scraped konkursi (read-only).
     Route::middleware('auth:sanctum')->group(function (): void {
         Route::get('/news', [NewsController::class, 'index']);
+    });
+
+    // Agent tools — the retrieval pipeline as a callable tool. Its own throttle
+    // (retrieval-only, no generation) keeps agent searches off the chat budget.
+    Route::middleware(['auth:sanctum', 'throttle:60,1'])->group(function (): void {
+        Route::post('/tools/search-law', [ToolController::class, 'searchLaw']);
+        Route::post('/tools/follow-references', [ToolController::class, 'followReferences']);
     });
 
     // Namespace reservation for future: /api-keys

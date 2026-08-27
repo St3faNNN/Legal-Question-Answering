@@ -96,6 +96,41 @@ def test_retrieve_empty_question_is_invalid_argument(channel):
     assert exc.value.code() == grpc.StatusCode.INVALID_ARGUMENT
 
 
+def test_references_returns_outgoing_citations(channel):
+    stub = retrieval_pb2_grpc.RetrievalStub(channel)
+    response = stub.References(retrieval_pb2.ReferencesRequest(law="ZAKON-A", article="1"))
+
+    assert response.found is True
+    assert response.source_citation == "ZAKON-A, чл. 1"
+    assert [reference.citation for reference in response.references] == ["ZAKON-A, чл. 3"]
+    assert response.references[0].confidence == 1.0
+
+
+def test_references_for_an_article_that_cites_nothing_is_empty(channel):
+    """Article 3 is cited BY article 1 but cites nothing itself."""
+    stub = retrieval_pb2_grpc.RetrievalStub(channel)
+    response = stub.References(retrieval_pb2.ReferencesRequest(law="ZAKON-A", article="3"))
+
+    assert response.found is True
+    assert list(response.references) == []
+
+
+def test_references_for_an_unknown_article_reports_not_found(channel):
+    stub = retrieval_pb2_grpc.RetrievalStub(channel)
+    response = stub.References(retrieval_pb2.ReferencesRequest(law="NEMA-ZAKON", article="9"))
+
+    assert response.found is False
+    assert response.source_citation == ""
+    assert list(response.references) == []
+
+
+def test_references_empty_arguments_are_invalid(channel):
+    stub = retrieval_pb2_grpc.RetrievalStub(channel)
+    with pytest.raises(grpc.RpcError) as exc:
+        stub.References(retrieval_pb2.ReferencesRequest(law="ZAKON-A", article=""))
+    assert exc.value.code() == grpc.StatusCode.INVALID_ARGUMENT
+
+
 # --- Pipeline behaviour (direct on the context, no wire) ----------------------
 
 

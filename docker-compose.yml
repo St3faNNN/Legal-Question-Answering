@@ -183,12 +183,22 @@ services:
       # Reranker-only (the cross-encoder's max sequence length); inert when
       # RERANK_BACKEND=none, consulted only by torch/onnx.
       RERANK_MAX_LENGTH: ${RERANK_MAX_LENGTH:-192}
+      # Prompt-injection TEST overlay. Empty (the default) = off, so production
+      # and the eval harness never load it. Set it to enable the test, e.g.:
+      #   INJECTION_FIXTURE_PATH=/fixtures/injection_fixtures.json \
+      #     docker compose up -d retrieval
+      # It appends the fixture chunks to the in-memory store only; vectors.sqlite
+      # is never touched. Unset it (recreate the container) to remove.
+      INJECTION_FIXTURE_PATH: ${INJECTION_FIXTURE_PATH:-}
     volumes:
       # Same rationale as x-app-source: a code change should cost a restart,
       # not an image rebuild.
       - ./services/retrieval/app:/srv/app:ro
       - ./artifacts/graph:/data:ro
       - ./artifacts/vector:/vectors:ro
+      # Prompt-injection test fixtures. Present in the container but inert unless
+      # INJECTION_FIXTURE_PATH points at one (see above).
+      - ./services/retrieval/fixtures:/fixtures:ro
       # BGE-M3 + the reranker are ~4.5 GB; cache them so only the first boot
       # pays the download.
       - hf-cache:/hf

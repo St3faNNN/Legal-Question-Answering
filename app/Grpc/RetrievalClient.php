@@ -22,4 +22,16 @@ interface RetrievalClient
      * }
      */
     public function retrieve(string $question): array;
+
+    /**
+     * Outgoing citations of a single article — the articles it points at. Pure
+     * graph traversal over the citation graph; identifier-only (no body text).
+     *
+     * @return array{
+     *     found: bool,
+     *     source_citation: string,
+     *     references: list<array{citation: string, heading: string, confidence: float}>,
+     * }
+     */
+    public function references(string $law, string $article): array;
 }
