@@ -302,6 +302,47 @@ and export/deletion before it's safe, and the evidence didn't ask for it. (A mem
 personal data; whatever is built has to join the app's export and account-deletion paths on
 the same terms — another cost against a benefit that didn't appear.)
 
+### Where decomposition earns its cost — the severance question
+
+The clearest evidence yet of what the agent is *for*, from putting one two-part question to both
+paths:
+
+> *Кои се основите за отказ поради технолошки вишок и колкава испратнина следува?*
+> — the grounds for a redundancy dismissal, and how much severance follows.
+
+**Chat path:** one retrieval, one generation, 2.6s. It retrieved чл. 96, 6, 76, 265, 101 and
+answered *both* parts — including a severance scale of one to seven net salaries and a 50% floor on
+the calculation base. A legal practitioner confirmed the answer was correct.
+
+**Agent** (run `20260827-145236-b4pq4i`): three searches, 25,274 tokens, ~7s.
+
+```
+step 0  search_law("технолошки вишок отказ испратнина")
+step 1  search_law("деловни причини отказ договор за вработување")
+step 2  search_law("испратнина деловни причини став висина")
+step 3  final answer
+```
+
+The third search surfaced **чл. 97**, the severance article, and the answer cites it paragraph by
+paragraph (ст. 1 through ст. 6): the full six-band scale, the calculation base, payment timing, the
+nullity of any waiver, and the seasonal-work exception.
+
+**чл. 97 never appeared in the chat path's retrieved passages.** So the chat answer's severance
+figures came from the model's own knowledge of Macedonian labour law — not from anything it was
+shown. It was correct, and the citation panel gave no sign the figures weren't grounded.
+
+The failure is subtle, and worth stating precisely: the chat answer was **not wrong — it was right
+with a broken audit trail.** For a legal tool that is arguably the *worse* failure mode, because a
+practitioner checking the answer for correctness will pass it, and the missing provenance is
+invisible. A single embedding of a two-part question retrieved the "grounds" half and missed the
+"severance" half, and generation papered over the gap from parametric knowledge.
+
+Don't overstate it: one question, one run each. The earlier procurement multi-hop ("consequences and
+deadlines") was answered adequately by the chat path, so this is a demonstration of a real failure
+mode, not evidence that every multi-hop question fails single-shot. But where one embedding *cannot*
+cover the question, the agent's separate searches are not overhead — they are the difference between
+**grounded** and **merely correct**.
+
 ### Three ways a question can fail, and where each is handled
 
 Working on the app's **non-legal input gate** clarified a distinction that had been blurred.
@@ -318,36 +359,30 @@ Three different failures need three different mechanisms:
 2. **A legal question about an uncovered domain** — Army ranks, criminal law, tax. *Not
    detectable before retrieval*: you can't know the corpus lacks it without searching. Handled
    at generation, by the prompt. Naming the ten laws in the *agent's* prompt transformed its
-   behaviour — a spiral of rephrased searches became a one-step refusal — so the same
-   enumeration was tried on the chat generation prompt (`prompts/legal_mk.txt`).
+   behaviour — a spiral of rephrased searches became a one-step refusal. The same enumeration is
+   now in the chat generation prompt (`prompts/legal_mk.txt`), kept to a single prose line so the
+   ≤5-line small-model guard still holds. (An earlier attempt as a multi-line list was reverted
+   for breaking that guard; on the hosted Gemini path the enumeration's effect on the *refusal
+   itself* is small — capable Gemini already refuses cleanly — so its real payoff is that it gives
+   the model the material to name *which* areas are covered, once refusals are handled properly.)
 
-   It was **measured, and reverted.** Three independent reasons it doesn't earn its place on
-   the chat path:
-
-   - **No measurable benefit on the default (Gemini) backend.** An army question and a tax
-     question both refused cleanly ("информацијата не е достапна", zero citations) *with and
-     without* the enumeration. The agent's win came from short-circuiting its *loop*; the
-     single-shot chat has no loop, and capable Gemini already refuses out-of-scope questions
-     without hedging.
-   - **It breaks the small model.** The chat prompt is shared with the llama.cpp fallback,
-     which is pinned to ≤5 lines by a test — a longer rule list once made Qwen2.5-0.5B emit a
-     lone citation instead of an answer. The 14-line enumeration violates that guard.
-   - **The outcome it was meant to produce is blocked anyway.** The hoped-for result was a
-     refusal *naming the covered areas*; but the chat prompt's `без набројување` (no-listing)
-     rule — kept for the small model — stops the model from enumerating them even when the list
-     is present.
-
-   The verification did confirm no regression: answerable questions stayed grounded, and the
-   subtle case — an `expected_refusal` question whose *domain* is covered but whose answer is
-   Agency guidance — still correctly says "not in the sources" rather than "out of scope". But
-   a change with no measured benefit that also breaks a documented guard doesn't ship. This is
-   the chat analogue of the agent findings above: the technique that helps the *loop* is inert
-   on the *pipeline*, because the pipeline was already doing the one retrieval it always does.
+   **Refusal handling, and a caution about markers.** When generation refuses, the provisions
+   panel is now suppressed — five unrelated articles above a refusal imply they are relevant when
+   the model has just said they aren't. Detecting a refusal reliably is the interesting part. The
+   prompt appends a machine-readable marker (`[[NO_SOURCE]]`) on refusal; but the marker **alone
+   is not trustworthy** — during verification Gemini appended it to a *real negative answer*
+   ("secondary qualification does not meet the conditions"). Marker-only detection would have
+   stripped a valid answer's citations, which are the product. So the panel is suppressed only
+   when the marker **and** a required refusal opening agree, and the marker is always stripped from
+   the text regardless. The general lesson: **a marker the model emits is a signal, not a
+   guarantee — models over-emit, so never let one alone strip something the user needs.** A false
+   positive can't fire; a missed suppression only leaves the prior behaviour.
 
 3. **A genuine retrieval gap** — the answer *is* in the corpus but the pipeline never surfaces
-   it (Q2 and Q9 in the eval set: a vocabulary mismatch between the question and the statute).
-   The hard one, and **unsolved**. Not the gate's job and not the prompt's — a
-   retrieval-quality problem that stays open.
+   it (Q2 and Q9 in the eval set: a vocabulary mismatch between the question and the statute; and
+   the severance case above, where чл. 97 never surfaced for a two-part question). The hard one,
+   and **unsolved**. Not the gate's job and not the prompt's — a retrieval-quality problem that
+   stays open.
 
 ---
 
@@ -362,7 +397,12 @@ Four separate pieces of work produced the same shape of result:
 - Cross-session memory doesn't earn its place, because clear questions self-ground and it
   bites only on ambiguous ones
 
-**When retrieval is good, the agent machinery has less to do.**
+**When retrieval is good, the agent machinery has less to do** — for *single-hop* questions.
+The severance question (§6) marks exactly where that stops holding: when one embedding cannot
+cover a two-part question, single-shot retrieves one half and generation fills the other from
+parametric knowledge — right, but ungrounded, and with a citation panel that hides the gap.
+There the agent's separate searches are not overhead; they are the difference between grounded
+and merely correct.
 
 The agent earns its complexity on questions a single retrieval genuinely cannot handle —
 decomposition into distinct sub-questions, and exhaustive enumeration of what an article
@@ -396,6 +436,13 @@ variance on the same question could easily account for a search more or less.
 passages does not catch content loss *within* a retained citation — the чл. 145 case above.
 Checking claims against passage text, rather than citations against a retrieved set, would be
 a stronger test.
+
+*The citation panel shows what was retrieved, not what the answer rests on.* The severance case
+(§6) is the sharp version: the chat answer's severance figures came from the model's own knowledge,
+чл. 97 was never retrieved, and the panel gave no indication. This is the **same class of gap** as
+the чл. 145 blind spot — a check on *citations against a retrieved set* passes while the *claims
+themselves* go unsourced. The same fix would catch both: verify claims against passage text, not
+citations against the retrieved set. Neither is currently tested for.
 
 *The strict grounding prompt costs a search on pure-reasoning follow-ups.* Asked which of
 three already-cited deadlines is shortest, the agent re-retrieves rather than reasoning over

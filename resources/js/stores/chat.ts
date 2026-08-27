@@ -2,6 +2,14 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { chatApi, type GraphTriple, type Message, type RetrievedChunk } from '@/api'
 
+/**
+ * The refusal marker the generation prompt emits (must match
+ * ComposesGraphRagReply::REFUSAL_MARKER). It streams into the bubble like any
+ * token, so it is stripped on `done`; the provisions panel is already suppressed
+ * server-side, which sends empty `top_chunks`.
+ */
+const REFUSAL_MARKER = /\s*\[\[NO_SOURCE\]\]\s*/g
+
 export const useChatStore = defineStore('chat', () => {
     const messages = ref<Message[]>([])
     const sending = ref(false)
@@ -107,6 +115,9 @@ export const useChatStore = defineStore('chat', () => {
                     live.id = data.message_id ?? live.id
                     live.model = data.model ?? null
                     live.tokens = data.tokens ?? null
+                    // A refusal streamed the marker into the bubble; strip it so it
+                    // never shows. The panel is suppressed via empty top_chunks below.
+                    live.content = live.content.replace(REFUSAL_MARKER, ' ').trim()
                     live.metadata = {
                         top_triples: (data.top_triples ?? []) as GraphTriple[],
                         top_chunks: (data.top_chunks ?? []) as RetrievedChunk[],

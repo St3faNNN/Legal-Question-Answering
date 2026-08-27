@@ -27,6 +27,24 @@ trait ComposesGraphRagReply
     private const HISTORY_CONTENT_LIMIT = 500;
 
     /**
+     * Machine-readable refusal marker the generation prompt appends when the
+     * answer is not in the sources (see prompts/legal_mk.txt). Detecting it is
+     * how a refusal suppresses the provisions panel — far more reliable than
+     * matching the refusal sentence, which the model phrases many ways. The
+     * frontend strips the same literal from the streamed bubble.
+     */
+    private const REFUSAL_MARKER = '[[NO_SOURCE]]';
+
+    /**
+     * The openings the prompt requires a refusal to begin with. Used as a second
+     * signal beside the marker: the marker alone is unreliable — the model
+     * sometimes appends it to a real (e.g. negative) answer — so the panel is
+     * suppressed only when both agree, and a substantive answer never loses its
+     * citations.
+     */
+    private const REFUSAL_OPENERS = '/^\s*(Системот не ја опфаќа|Информацијата не е достапна|Оваа тема не е опфатена)/u';
+
+    /**
      * Assemble the GeneratesReplies payload from the two services' responses.
      * Retrieval output (entities, triple count, truncated context) is stored in
      * the message metadata so retrieval quality is inspectable per message.
@@ -41,12 +59,34 @@ trait ComposesGraphRagReply
             throw AiServiceException::invalidResponse('generation', 'missing answer field');
         }
 
+        // Refusal handling (see prompts/legal_mk.txt). Always strip the marker so
+        // it never shows — the model sometimes appends it in error. Suppress the
+        // provisions panel only when the marker AND a refusal-shaped opening agree:
+        // showing five unrelated articles above a refusal implies they are
+        // relevant, but a marker mistakenly added to a real (negative) answer must
+        // not strip that answer's citations. False positives are the failure mode
+        // to avoid; a missed suppression only leaves the current behaviour.
+        $hadMarker = str_contains($generation['answer'], self::REFUSAL_MARKER);
+        $answer = $hadMarker ? $this->stripRefusalMarker($generation['answer']) : $generation['answer'];
+        $refused = $hadMarker && preg_match(self::REFUSAL_OPENERS, $answer) === 1;
+        if ($refused) {
+            $retrieval = [
+                'context' => '',
+                'entities' => [],
+                'triples' => [],
+                'chunks' => [],
+                'context_items' => 0,
+                'latency_ms' => $retrieval['latency_ms'] ?? null,
+            ];
+        }
+
         return [
-            'answer' => $generation['answer'],
+            'answer' => $answer,
             'model' => $generation['model'] ?? 'qwen2.5-1.5b-instruct',
             'tokens' => $generation['tokens'] ?? null,
             'latency_ms' => (int) ((hrtime(true) - $startNs) / 1_000_000),
             'metadata' => [
+                'refused' => $refused,
                 'entities' => $retrieval['entities'] ?? [],
                 'triple_count' => count($retrieval['triples'] ?? []),
                 'top_triples' => $this->topTriples($retrieval['triples'] ?? []),
@@ -58,6 +98,14 @@ trait ComposesGraphRagReply
                 'generation_latency_ms' => $generation['latency_ms'] ?? null,
             ],
         ];
+    }
+
+    /** Remove the refusal marker (and the whitespace around it) from the answer. */
+    private function stripRefusalMarker(string $answer): string
+    {
+        $cleaned = preg_replace('/\s*'.preg_quote(self::REFUSAL_MARKER, '/').'\s*/u', ' ', $answer);
+
+        return trim($cleaned ?? $answer);
     }
 
     /**

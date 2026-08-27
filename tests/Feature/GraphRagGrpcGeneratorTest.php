@@ -327,4 +327,71 @@ describe('GraphRAG gRPC chat flow', function (): void {
 
         expect($user->conversations()->first()->messages)->toHaveCount(1);
     });
+
+    it('suppresses the provisions panel when generation refuses (marker present)', function (): void {
+        // Retrieval DID return chunks — but the answer carries the refusal marker,
+        // so the panel must be blanked and the marker stripped from the text.
+        bindRetrievalClient(fn (): array => grpcRetrievalSuccess());
+        bindGenerationClient(fn (): array => [
+            'answer' => 'Оваа тема не е опфатена со достапните закони. [[NO_SOURCE]]',
+            'model' => 'gemini',
+            'tokens' => 5,
+            'latency_ms' => 10,
+        ]);
+
+        $user = User::factory()->create();
+        actingAs($user);
+
+        postJson('/api/v1/chat', ['message' => 'Колку години се служи воен рок?'])->assertCreated();
+
+        $metadata = $user->conversations()->first()->messages()->where('role', 'assistant')->first()->metadata;
+        $content = $user->conversations()->first()->messages()->where('role', 'assistant')->first()->content;
+
+        expect($metadata['refused'])->toBeTrue()
+            ->and($metadata['top_chunks'])->toBe([])
+            ->and($metadata['chunk_count'])->toBe(0)
+            ->and($metadata['top_triples'])->toBe([])
+            ->and($metadata['entities'])->toBe([])
+            ->and($content)->not->toContain('[[NO_SOURCE]]')
+            ->and($content)->toContain('не е опфатена');
+    });
+
+    it('keeps the provisions panel for a normal answer (no marker)', function (): void {
+        bindRetrievalClient(fn (): array => grpcRetrievalSuccess());
+        bindGenerationClient(fn (): array => grpcGenerationSuccess());
+
+        $user = User::factory()->create();
+        actingAs($user);
+
+        postJson('/api/v1/chat', ['message' => 'Колку е работното време?'])->assertCreated();
+
+        $metadata = $user->conversations()->first()->messages()->where('role', 'assistant')->first()->metadata;
+
+        expect($metadata['refused'])->toBeFalse()
+            ->and($metadata['top_chunks'])->not->toBe([]);
+    });
+
+    it('keeps the panel (but strips the marker) when a real answer wrongly carries it', function (): void {
+        // The model sometimes appends the marker to a substantive negative answer.
+        // Because the text is not refusal-shaped, the panel must survive — only the
+        // stray marker is removed. This is the false positive that must never fire.
+        bindRetrievalClient(fn (): array => grpcRetrievalSuccess());
+        bindGenerationClient(fn (): array => [
+            'answer' => 'Вработен со средна стручна спрема не ги исполнува условите за лице за јавни набавки. [[NO_SOURCE]]',
+            'model' => 'gemini',
+            'tokens' => 5,
+            'latency_ms' => 10,
+        ]);
+
+        $user = User::factory()->create();
+        actingAs($user);
+
+        postJson('/api/v1/chat', ['message' => 'Дали вработен со средна стручна спрема може да биде лице за јавни набавки?'])->assertCreated();
+
+        $message = $user->conversations()->first()->messages()->where('role', 'assistant')->first();
+
+        expect($message->metadata['refused'])->toBeFalse()
+            ->and($message->metadata['top_chunks'])->not->toBe([])
+            ->and($message->content)->not->toContain('[[NO_SOURCE]]');
+    });
 });
