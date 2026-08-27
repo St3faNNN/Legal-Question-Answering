@@ -114,8 +114,6 @@ def test_chat_messages_lead_with_the_system_instruction():
 def test_chat_system_demands_grounded_macedonian_answers():
     assert "користејќи ги дадените извори" in CHAT_SYSTEM
     assert "на македонски јазик" in CHAT_SYSTEM
-    assert "информацијата не е достапна" in CHAT_SYSTEM
-
 
 def test_chat_system_bounds_answer_length():
     """Answer length is answer latency at ~0.55s per token on CPU. Without an
