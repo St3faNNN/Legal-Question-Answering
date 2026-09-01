@@ -74,6 +74,14 @@ x-laravel-env: &laravel-env
   # full ordering against --timeout and retry_after.
   AI_TIMEOUT: "240"
   AI_RETRIEVAL_TIMEOUT: ${AI_RETRIEVAL_TIMEOUT:-45}
+  # The SAME variable the retrieval service reads (see that service below). The
+  # app needs it because the provisions panel is sized from it — the panel shows
+  # every passage the generator read, and a panel shorter than the context is a
+  # provenance bug (it hid чл. 97 at rank 6 in the severance case). Two processes,
+  # one value: set it here and on retrieval, or they drift apart again. The
+  # equality is asserted in tests, but only against the app's own config, so this
+  # wiring is the part that has to be right by hand.
+  RETRIEVAL_TOP_N: ${RETRIEVAL_TOP_N:-10}
   # gRPC targets (host:port, no scheme) — the services speak gRPC/HTTP2.
   AI_RETRIEVAL_URL: retrieval:8001
   AI_GENERATION_URL: generation:8002

@@ -143,18 +143,27 @@ describe('GraphRAG gRPC chat flow', function (): void {
             ]);
     });
 
-    it('caps top_chunks at the five highest-ranked passages', function (): void {
-        bindRetrievalClient(fn (): array => [
-            ...grpcRetrievalSuccess(),
-            'chunks' => collect(range(1, 8))
-                ->map(fn (int $i): array => [
-                    'id' => (string) $i,
-                    'text' => "текст {$i}",
-                    'source' => "ZAKON-A, чл. {$i}",
-                    'score' => 10.0 - $i,
-                ])
-                ->all(),
-        ]);
+    /** A retrieval response carrying $count ranked passages. */
+    function rankedChunks(int $count): array
+    {
+        return collect(range(1, $count))
+            ->map(fn (int $i): array => [
+                'id' => (string) $i,
+                'text' => "текст {$i}",
+                'source' => "ZAKON-A, чл. {$i}",
+                'score' => 100.0 - $i,
+            ])
+            ->all();
+    }
+
+    it('shows every passage the generator read, not a shorter display slice', function (): void {
+        // The bug this asserts against: the panel showed 5 while retrieval
+        // returned 10, so an answer grounded in the passage at rank 6 cited a
+        // provision the reader never saw (чл. 97, the severance case). Nothing
+        // compared the two numbers, so nothing caught it.
+        config(['ai.retrieval_top_n' => 10]);
+
+        bindRetrievalClient(fn (): array => [...grpcRetrievalSuccess(), 'chunks' => rankedChunks(10)]);
         bindGenerationClient(fn (): array => grpcGenerationSuccess());
 
         $user = User::factory()->create();
@@ -164,11 +173,68 @@ describe('GraphRAG gRPC chat flow', function (): void {
 
         $metadata = $user->conversations()->first()->messages()->where('role', 'assistant')->first()->metadata;
 
-        // All eight were retrieved and reranked; only the leading five are
-        // surfaced as citations.
-        expect($metadata['chunk_count'])->toBe(8)
-            ->and($metadata['top_chunks'])->toHaveCount(5)
-            ->and(array_column($metadata['top_chunks'], 'id'))->toBe(['1', '2', '3', '4', '5']);
+        expect($metadata['chunk_count'])->toBe(10)
+            ->and($metadata['top_chunks'])->toHaveCount(10)
+            ->and(array_column($metadata['top_chunks'], 'id'))
+            ->toBe(['1', '2', '3', '4', '5', '6', '7', '8', '9', '10']);
+    });
+
+    it('sizes the panel from ai.retrieval_top_n, so tuning retrieval moves the panel with it', function (): void {
+        // The coupling itself. If someone raises RETRIEVAL_TOP_N and the panel
+        // stays put, the gap reopens silently — this is what stops that.
+        config(['ai.retrieval_top_n' => 16]);
+
+        bindRetrievalClient(fn (): array => [...grpcRetrievalSuccess(), 'chunks' => rankedChunks(16)]);
+        bindGenerationClient(fn (): array => grpcGenerationSuccess());
+
+        $user = User::factory()->create();
+        actingAs($user);
+
+        postJson('/api/v1/chat', ['message' => 'Прашање?'])->assertCreated();
+
+        $metadata = $user->conversations()->first()->messages()->where('role', 'assistant')->first()->metadata;
+
+        // The panel equals the configured window: everything read is shown.
+        expect($metadata['top_chunks'])->toHaveCount(config('ai.retrieval_top_n'))
+            ->and($metadata['top_chunks'])->toHaveCount($metadata['chunk_count']);
+    });
+
+    it('never shows fewer provisions than the generator read', function (int $returned): void {
+        // The invariant, stated directly: whatever retrieval returns within the
+        // configured window is displayed. A panel shorter than the context is the
+        // provenance bug, whichever way the two drift.
+        config(['ai.retrieval_top_n' => 10]);
+
+        bindRetrievalClient(fn (): array => [...grpcRetrievalSuccess(), 'chunks' => rankedChunks($returned)]);
+        bindGenerationClient(fn (): array => grpcGenerationSuccess());
+
+        $user = User::factory()->create();
+        actingAs($user);
+
+        postJson('/api/v1/chat', ['message' => 'Прашање?'])->assertCreated();
+
+        $metadata = $user->conversations()->first()->messages()->where('role', 'assistant')->first()->metadata;
+
+        expect($metadata['top_chunks'])->toHaveCount($returned)
+            ->and($metadata['chunk_count'])->toBe($returned);
+    })->with([1, 5, 9, 10]);
+
+    it('falls back to the retrieval service default when the config value is nonsense', function (): void {
+        // A misconfigured 0 must not blank the panel — that would be the same
+        // provenance failure by another route.
+        config(['ai.retrieval_top_n' => 0]);
+
+        bindRetrievalClient(fn (): array => [...grpcRetrievalSuccess(), 'chunks' => rankedChunks(10)]);
+        bindGenerationClient(fn (): array => grpcGenerationSuccess());
+
+        $user = User::factory()->create();
+        actingAs($user);
+
+        postJson('/api/v1/chat', ['message' => 'Прашање?'])->assertCreated();
+
+        $metadata = $user->conversations()->first()->messages()->where('role', 'assistant')->first()->metadata;
+
+        expect($metadata['top_chunks'])->toHaveCount(10);
     });
 
     it('truncates long passage text in the citation trail', function (): void {

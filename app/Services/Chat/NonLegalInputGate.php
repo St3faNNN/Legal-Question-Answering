@@ -6,8 +6,8 @@ namespace App\Services\Chat;
  * A pre-retrieval gate that short-circuits input which is not a legal question
  * at all — greetings, thanks, small talk, questions about the assistant, empty
  * or near-empty input — so "Како си" no longer embeds with BGE-M3, searches
- * 1,831 chunks, expands the citation graph and calls Gemini only to render five
- * irrelevant provisions above a refusal.
+ * 1,831 chunks, expands the citation graph and calls Gemini only to render a
+ * page of irrelevant provisions above a refusal.
  *
  * Deliberately NOT an LLM (that defeats the purpose) and NOT a fused-score
  * threshold: RRF scores do not separate answerable from unanswerable — the

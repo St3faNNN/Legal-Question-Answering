@@ -302,46 +302,71 @@ and export/deletion before it's safe, and the evidence didn't ask for it. (A mem
 personal data; whatever is built has to join the app's export and account-deletion paths on
 the same terms — another cost against a benefit that didn't appear.)
 
-### Where decomposition earns its cost — the severance question
+### The severance question — an interface failure, not a retrieval failure
 
-The clearest evidence yet of what the agent is *for*, from putting one two-part question to both
-paths:
+This case was recorded here as evidence that single-shot retrieval *missed* the severance article,
+and that decomposition was what surfaced it. **That was wrong.** The correction is more useful than
+the original claim, so the case is kept and restated rather than deleted.
 
 > *Кои се основите за отказ поради технолошки вишок и колкава испратнина следува?*
 > — the grounds for a redundancy dismissal, and how much severance follows.
 
-**Chat path:** one retrieval, one generation, 2.6s. It retrieved чл. 96, 6, 76, 265, 101 and
-answered *both* parts — including a severance scale of one to seven net salaries and a 50% floor on
-the calculation base. A legal practitioner confirmed the answer was correct.
+**Chat path:** one retrieval, one generation, ~2.6s. It answered *both* parts — including a
+severance scale of one to seven net salaries and a 50% floor on the calculation base. A legal
+practitioner confirmed the answer was correct.
 
-**Agent** (run `20260827-145236-b4pq4i`): three searches, 25,274 tokens, ~7s.
+**Agent** (run `20260827-145236-b4pq4i`): three searches, 25,274 tokens, ~7s, and an answer citing
+**чл. 97** paragraph by paragraph — the six-band scale, the calculation base, payment timing, the
+nullity of any waiver, the seasonal-work exception.
+
+The original conclusion was that чл. 97 never reached the chat path, so the chat answer's figures
+must have come from the model's own knowledge of Macedonian labour law. Calling retrieval directly
+and reading the response — rather than reading the provisions panel — shows otherwise:
 
 ```
-step 0  search_law("технолошки вишок отказ испратнина")
-step 1  search_law("деловни причини отказ договор за вработување")
-step 2  search_law("испратнина деловни причини став висина")
-step 3  final answer
+context_items = 10        len(context) = 11,458 chars
+  1. чл. 96    2. чл. 6    3. чл. 76    4. чл. 265 ст. (1)    5. чл. 101 ст. (5)-(10)
+  6. ZAKON-ZA-RABOTNI, чл. 97 ст. (1)-(5)     <- "седум нето плати" is in here
+  7. чл. 71    8. чл. 77    9. чл. 94    10. чл. 73
 ```
 
-The third search surfaced **чл. 97**, the severance article, and the answer cites it paragraph by
-paragraph (ст. 1 through ст. 6): the full six-band scale, the calculation base, payment timing, the
-nullity of any waiver, and the seasonal-work exception.
+**чл. 97 was retrieved, at rank 6 of 10, and its text was in the generation context.** The answer
+was grounded in it. What went wrong is one constant downstream: the provisions panel rendered
+`ComposesGraphRagReply::TOP_CHUNKS_LIMIT = 5`, so the article the answer actually rested on was
+truncated out of the display.
 
-**чл. 97 never appeared in the chat path's retrieved passages.** So the chat answer's severance
-figures came from the model's own knowledge of Macedonian labour law — not from anything it was
-shown. It was correct, and the citation panel gave no sign the figures weren't grounded.
+> **Since fixed.** The panel is now sized from `ai.retrieval_top_n` — the same env var the
+> retrieval service reads — so it shows every passage the generator saw, and a test asserts the
+> two stay equal. The opposite fix (capping the *context* to 5 so it matched the panel) was
+> measured first and rejected: it costs 20% of the answerable fraction on the eval set (recall
+> over the returned window 0.7292 → 0.5833) and turns this very question into a refusal. Making
+> the panel honest was free; making the context match the panel was not.
 
-The failure is subtle, and worth stating precisely: the chat answer was **not wrong — it was right
-with a broken audit trail.** For a legal tool that is arguably the *worse* failure mode, because a
-practitioner checking the answer for correctness will pass it, and the missing provenance is
-invisible. A single embedding of a two-part question retrieved the "grounds" half and missed the
-"severance" half, and generation papered over the gap from parametric knowledge.
+**The finding is therefore that the interface under-reported provenance: the answer was grounded in
+a passage the panel truncated away.** That is a different failure, in a different component, from
+the one recorded here before — and arguably the more instructive one, because it was invisible to
+every check in place:
 
-Don't overstate it: one question, one run each. The earlier procurement multi-hop ("consequences and
-deadlines") was answered adequately by the chat path, so this is a demonstration of a real failure
-mode, not evidence that every multi-hop question fails single-shot. But where one embedding *cannot*
-cover the question, the agent's separate searches are not overhead — they are the difference between
-**grounded** and **merely correct**.
+- **retrieval** was fine — the article was found, at a respectable rank;
+- **generation** was fine — it used what it was given;
+- **the practitioner's correctness review** passed, because the answer *was* correct;
+- **the grounding check** never fires on this path at all. It compares cited articles against the
+  retrieved set, and the chat answer cites nothing: `prompts/legal_mk.txt` asks for at most three
+  sentences of prose without citations. On the chat path the panel *is* the citation trail — and
+  the panel was short.
+
+Every component behaved correctly and the system still misled the reader about where its answer came
+from. **A display cap is a provenance bug.** A pipeline that reports "retrieved 10" and shows 5 will
+not tell you which five it dropped, and the two numbers are both already on every message
+(`chunk_count`, `context_items`) — nothing compared them.
+
+What this case does **not** show is that decomposition surfaced something single-shot could not. For
+this two-part question one embedding covered both halves. The agent's answer is still the better
+artefact — per-claim citation at ст. level, plus the two-year re-hire bar, the calculation base and
+the seasonal exception that the three-sentence chat answer has no room for — but that is a
+thoroughness-and-presentation difference, not a retrieval one. For a case where retrieval genuinely
+does fall short, see §7: adding a third clause to this same question pushes чл. 97 out of the
+retrieved window entirely.
 
 ### Three ways a question can fail, and where each is handled
 
@@ -367,8 +392,8 @@ Three different failures need three different mechanisms:
    the model the material to name *which* areas are covered, once refusals are handled properly.)
 
    **Refusal handling, and a caution about markers.** When generation refuses, the provisions
-   panel is now suppressed — five unrelated articles above a refusal imply they are relevant when
-   the model has just said they aren't. Detecting a refusal reliably is the interesting part. The
+   panel is now suppressed — a page of unrelated articles above a refusal implies they are
+   relevant when the model has just said they aren't. Detecting a refusal reliably is the interesting part. The
    prompt appends a machine-readable marker (`[[NO_SOURCE]]`) on refusal; but the marker **alone
    is not trustworthy** — during verification Gemini appended it to a *real negative answer*
    ("secondary qualification does not meet the conditions"). Marker-only detection would have
@@ -380,9 +405,15 @@ Three different failures need three different mechanisms:
 
 3. **A genuine retrieval gap** — the answer *is* in the corpus but the pipeline never surfaces
    it (Q2 and Q9 in the eval set: a vocabulary mismatch between the question and the statute; and
-   the severance case above, where чл. 97 never surfaced for a two-part question). The hard one,
-   and **unsolved**. Not the gate's job and not the prompt's — a retrieval-quality problem that
-   stays open.
+   the *three*-part redundancy question in §7, where чл. 97 falls outside the retrieved window
+   entirely). The hard one, and **unsolved**. Not the gate's job and not the prompt's — a
+   retrieval-quality problem that stays open.
+
+   Note that the two-part severance question in §6 is **not** an instance of this, though it was
+   filed as one. There the article was retrieved and used; only the display dropped it. The two
+   failures look identical from the UI and need opposite fixes — better retrieval in one case, an
+   honest panel in the other — so telling them apart means reading the generation context, not the
+   panel.
 
 ---
 
@@ -397,16 +428,42 @@ Four separate pieces of work produced the same shape of result:
 - Cross-session memory doesn't earn its place, because clear questions self-ground and it
   bites only on ambiguous ones
 
-**When retrieval is good, the agent machinery has less to do** — for *single-hop* questions.
-The severance question (§6) marks exactly where that stops holding: when one embedding cannot
-cover a two-part question, single-shot retrieves one half and generation fills the other from
-parametric knowledge — right, but ungrounded, and with a citation panel that hides the gap.
-There the agent's separate searches are not overhead; they are the difference between grounded
-and merely correct.
+**When retrieval is good, the agent machinery has less to do** — for *single-hop* questions. The
+qualification needs a case where one embedding genuinely cannot cover the question. The severance
+question (§6) is **not** that case: there чл. 97 sat at rank 6 of 10, inside the generation context,
+and the failure was the panel rather than the search.
 
-The agent earns its complexity on questions a single retrieval genuinely cannot handle —
-decomposition into distinct sub-questions, and exhaustive enumeration of what an article
-cites. Everywhere else it is overhead on top of a pipeline that already worked.
+Run `20260826-125543-uddk7m` is that case. A **three**-part version of the same subject —
+
+> *Работодавачот сака да го откаже договорот за вработување поради технолошки вишок. Кои се условите
+> за таков отказ, колкав е отказниот рок и дали работникот има право на испратнина?*
+
+— asks for the grounds, the notice period, **and** the severance. The agent searched twice and cited
+чл. 76, 88, 96 and 97. Putting the same question to single-shot retrieval returns ten passages, and
+**чл. 97 is not among them at any rank**:
+
+```
+чл. 81 ст.(1) · чл. 73 · чл. 76 · чл. 265 ст.(1) · чл. 71 ·
+чл. 6 · чл. 80 · чл. 101 ст.(5)-(10) · чл. 96 · чл. 88
+```
+
+Three of the four cited articles are there; the severance article is not. Adding the third clause
+displaced it out of the window entirely, where in the two-part version it had ranked 6th. The two
+variants locate the boundary precisely: **the same article, the same corpus, one clause apart —
+inside the context at two parts, outside it at three.** A second, weaker case points the same way:
+for *"Во кој рок и до кого се поднесува жалба?"* (run `20260826-133022-5kfwho`) the agent cited ten
+articles and single-shot retrieval covers nine of them, missing чл. 142.
+
+So the pattern stands, with the qualification now resting on evidence that survives checking — and
+stated more narrowly than before. It is not "two-part questions defeat single-shot retrieval"; it is
+that **as a question accumulates distinct sub-questions, one embedding stops representing all of
+them, and the point where that happens is somewhere between two clauses and three.** Before this
+correction the qualification rested on the severance case, which turned out to demonstrate a
+display bug instead.
+
+The agent earns its complexity on questions past that boundary — decomposition into distinct
+sub-questions, and exhaustive enumeration of what an article cites. Everywhere else it is overhead
+on top of a pipeline that already worked.
 
 That is a more valuable conclusion than any of the individual optimisations, and it was
 reached by measurement rather than assumption — which is only possible because the trace
@@ -432,17 +489,24 @@ building the loop by hand.
 *Small samples.* Most findings rest on one to three runs per configuration. Run-to-run
 variance on the same question could easily account for a search more or less.
 
-*The grounding check has a blind spot.* Verifying that cited articles appear in retrieved
-passages does not catch content loss *within* a retained citation — the чл. 145 case above.
-Checking claims against passage text, rather than citations against a retrieved set, would be
-a stronger test.
+*The grounding check has a blind spot, and it is wider than it first looked.* Verifying that
+cited articles appear in retrieved passages does not catch content loss *within* a retained
+citation — the чл. 145 case above. It also cannot fire **at all** on the chat path, whose prompt
+asks for prose with no citations: there is nothing to check. On that path the provisions panel
+substitutes for a citation trail, which is exactly how the severance display gap (§6) went
+unnoticed. Checking claims against passage text, rather than citations against a retrieved set,
+would catch both. Neither is currently tested for.
 
-*The citation panel shows what was retrieved, not what the answer rests on.* The severance case
-(§6) is the sharp version: the chat answer's severance figures came from the model's own knowledge,
-чл. 97 was never retrieved, and the panel gave no indication. This is the **same class of gap** as
-the чл. 145 blind spot — a check on *citations against a retrieved set* passes while the *claims
-themselves* go unsourced. The same fix would catch both: verify claims against passage text, not
-citations against the retrieved set. Neither is currently tested for.
+*The panel is not the context — and mistaking one for the other put a wrong finding in this
+document.* The severance conclusion stood on an inference from the provisions panel: чл. 97 was not
+displayed, therefore it was not retrieved. It **was** retrieved, at rank 6 of 10, and its text was
+in the generation context. The error was found only by calling retrieval directly and reading
+`context_items` and the context string instead of the five passages the UI renders. The general
+trap: **any panel, log line, or metadata field showing a *slice* of what a model saw is evidence
+about the slice and nothing else.** Both numbers were already on every message — `chunk_count` and
+`context_items` each said 10 while the panel showed 5 — and nothing compared them, because nothing
+was looking for a divergence. When reasoning about what a model knew, read the context it was
+given.
 
 *The strict grounding prompt costs a search on pure-reasoning follow-ups.* Asked which of
 three already-cited deadlines is shortest, the agent re-retrieves rather than reasoning over

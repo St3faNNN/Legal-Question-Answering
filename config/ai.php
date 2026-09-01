@@ -53,6 +53,37 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Retrieved Passages (RETRIEVAL_TOP_N)
+    |--------------------------------------------------------------------------
+    |
+    | How many passages the retrieval service returns, and therefore how many the
+    | generator reads. The service owns this number (services/retrieval/app/
+    | config.py, _resolve_top_n) — the value here is the *same env var*, read by
+    | the app so the provisions panel can size itself to the generation context
+    | instead of to a separate constant.
+    |
+    | That separation is what produced the severance case: the panel showed 5
+    | while the generator read 10, the answer was grounded in the article at rank
+    | 6, and the provision it cited from was never displayed. Retrieval,
+    | generation and a practitioner's correctness review all passed, because none
+    | of them compares what was shown against what was read. Deriving the panel
+    | from this value is what stops the two drifting apart again; see
+    | ComposesGraphRagReply::panelLimit().
+    |
+    | IMPORTANT: this is one env var read by two processes. In Docker it must be
+    | set on the app containers as well as the retrieval container (both are
+    | wired in docker-compose.yml) or the app will size the panel to its default
+    | while the service returns something else.
+    |
+    | RERANK_TOP_N is honoured as a deprecated alias, exactly as the retrieval
+    | service honours it, so an old setting cannot desynchronise the two.
+    |
+    */
+
+    'retrieval_top_n' => (int) (env('RETRIEVAL_TOP_N') ?: env('RERANK_TOP_N') ?: 10),
+
+    /*
+    |--------------------------------------------------------------------------
     | Microservice Endpoints
     |--------------------------------------------------------------------------
     |

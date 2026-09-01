@@ -18,7 +18,11 @@ trait ComposesGraphRagReply
 
     private const TOP_TRIPLES_LIMIT = 5;
 
-    private const TOP_CHUNKS_LIMIT = 5;
+    /**
+     * Fallback panel size when ai.retrieval_top_n is missing or nonsensical.
+     * Matches the retrieval service's own default (config.py, _resolve_top_n).
+     */
+    private const DEFAULT_PANEL_LIMIT = 10;
 
     private const CHUNK_TEXT_LIMIT = 600;
 
@@ -49,6 +53,9 @@ trait ComposesGraphRagReply
      * Retrieval output (entities, triple count, truncated context) is stored in
      * the message metadata so retrieval quality is inspectable per message.
      *
+     * `top_chunks` carries every passage the generator read, not a shorter
+     * display slice — see {@see self::panelLimit()} for why that matters.
+     *
      * @param  array{context?: string, entities?: list<string>, triples?: array<int, mixed>, chunks?: array<int, mixed>, context_items?: int|null, latency_ms?: int|null}  $retrieval
      * @param  array{answer?: string, model?: string|null, tokens?: int|null, latency_ms?: int|null}  $generation
      * @return array{answer: string, model: ?string, tokens: ?int, latency_ms: ?int, metadata: array<string, mixed>}
@@ -62,7 +69,7 @@ trait ComposesGraphRagReply
         // Refusal handling (see prompts/legal_mk.txt). Always strip the marker so
         // it never shows — the model sometimes appends it in error. Suppress the
         // provisions panel only when the marker AND a refusal-shaped opening agree:
-        // showing five unrelated articles above a refusal implies they are
+        // showing a page of unrelated articles above a refusal implies they are
         // relevant, but a marker mistakenly added to a real (negative) answer must
         // not strip that answer's citations. False positives are the failure mode
         // to avoid; a missed suppression only leaves the current behaviour.
@@ -132,10 +139,35 @@ trait ComposesGraphRagReply
     }
 
     /**
-     * The highest-ranked retrieved passages the answer was grounded in, capped
-     * at TOP_CHUNKS_LIMIT. Retrieval returns them in reranked order, so the
-     * leading slice is the "top" set surfaced in the UI. Passage text is
-     * truncated because the message metadata is a citation trail, not a second
+     * How many provisions the panel shows: every passage the generator read.
+     *
+     * Derived from ai.retrieval_top_n rather than chosen independently, because
+     * an independently chosen number is exactly what went wrong. The panel used
+     * to show 5 while retrieval returned 10; for "основите за отказ поради
+     * технолошки вишок и колкава испратнина", the answer was grounded in чл. 97
+     * at rank 6, and the provision it drew its figures from was never displayed.
+     * Retrieval was fine, generation was fine, and a practitioner's correctness
+     * review passed — nothing in the system compared what was displayed against
+     * what was read.
+     *
+     * Capping the *context* to 5 instead was measured and rejected: it costs 20%
+     * of the answerable fraction on the eval set (recall over the returned window
+     * 0.7292 -> 0.5833) and turns that same severance question into a refusal.
+     * See the eval runs 20260829-173503-top10-pool24 and -173131-top5-pool24.
+     */
+    private function panelLimit(): int
+    {
+        $configured = (int) config('ai.retrieval_top_n', self::DEFAULT_PANEL_LIMIT);
+
+        return $configured > 0 ? $configured : self::DEFAULT_PANEL_LIMIT;
+    }
+
+    /**
+     * The retrieved passages the answer was grounded in — all of them, in
+     * retrieval's rank order. The cap equals what retrieval returns
+     * ({@see self::panelLimit()}), so the panel and the generation context hold
+     * the same provisions and provenance is complete by construction. Passage
+     * text is still truncated: the metadata is a citation trail, not a second
      * copy of the corpus.
      *
      * @param  array<int, mixed>  $chunks
@@ -144,7 +176,7 @@ trait ComposesGraphRagReply
     private function topChunks(array $chunks): array
     {
         return collect($chunks)
-            ->take(self::TOP_CHUNKS_LIMIT)
+            ->take($this->panelLimit())
             ->filter(fn ($chunk): bool => is_array($chunk))
             ->map(fn (array $chunk): array => [
                 'id' => (string) ($chunk['id'] ?? ''),
