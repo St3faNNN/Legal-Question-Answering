@@ -34,6 +34,14 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from statistics import mean, median
 
+# The report lines carry Cyrillic and a literal delta; on Windows the console
+# defaults to cp1252 and every print of them raises UnicodeEncodeError before any
+# output appears. Force UTF-8 on our own streams rather than requiring callers to
+# set PYTHONIOENCODING.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8")
+
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "services" / "retrieval" / "app"))  # self-contained pb package (no torch)
 
@@ -159,6 +167,10 @@ def score_run(questions: list) -> dict | None:
 
     return {
         "n_scored": len(scored),
+        # recall@5 exists because RETRIEVAL_TOP_N=5 was proposed: a run capped at
+        # 5 can never score at k=6, so comparing it against recall@6 would read
+        # as a loss no matter how good the ordering is. Compare like with like.
+        "recall_at_5": round(mean(recall_at(q, 5) for q in scored), 4),
         "recall_at_6": round(mean(recall_at(q, 6) for q in scored), 4),
         "recall_at_16": round(mean(recall_at(q, 16) for q in scored), 4),
         "mean_rank_of_expected": round(mean(ranks), 2) if ranks else None,
@@ -198,6 +210,7 @@ def to_markdown(result: dict) -> str:
         lines += [
             "---",
             "## Scoring",
+            f"- recall@5: **{s.get('recall_at_5')}**",
             f"- recall@6: **{s['recall_at_6']}**",
             f"- recall@16: **{s['recall_at_16']}**",
             f"- mean rank of expected: {s['mean_rank_of_expected']}",
@@ -295,6 +308,8 @@ def cmd_compare(args) -> None:
 
     sa, sb = a.get("scoring"), b.get("scoring")
     if sa and sb:
+        if sa.get("recall_at_5") is not None and sb.get("recall_at_5") is not None:
+            print(f"\nrecall@5  {sa['recall_at_5']} -> {sb['recall_at_5']}  (Δ{sb['recall_at_5'] - sa['recall_at_5']:+.4f})")
         print(f"\nrecall@6  {sa['recall_at_6']} -> {sb['recall_at_6']}  (Δ{sb['recall_at_6'] - sa['recall_at_6']:+.4f})")
         print(f"recall@16 {sa['recall_at_16']} -> {sb['recall_at_16']}  (Δ{sb['recall_at_16'] - sa['recall_at_16']:+.4f})")
 
