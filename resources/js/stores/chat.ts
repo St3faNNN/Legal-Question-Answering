@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import { chatApi, type GraphTriple, type Message, type RetrievedChunk } from '@/api'
+import { chatApi, type AgentSearch, type GraphTriple, type Message, type RetrievedChunk } from '@/api'
 
 /**
  * The refusal marker the generation prompt emits (must match
@@ -20,6 +20,15 @@ export const useChatStore = defineStore('chat', () => {
      * the user unable to tell progress from a hang.
      */
     const status = ref<string | null>(null)
+    /**
+     * The searches the running agent has issued so far, appended as its
+     * `agent_search` events arrive. An escalation makes several searches over ~7s
+     * and streams no tokens (the agent's model calls are non-streaming by
+     * construction), so this list — not a spinner — is the progress.
+     */
+    const agentSearches = ref<AgentSearch[]>([])
+    /** True while an escalation is running, so the thread can show its progress. */
+    const escalating = ref(false)
 
     /**
      * Send a message and stream the assistant reply token-by-token. The POST
@@ -65,6 +74,31 @@ export const useChatStore = defineStore('chat', () => {
     }
 
     /**
+     * Escalate an existing answer to the research agent. Costs several times a
+     * normal question, so it is only ever reached by an explicit user action —
+     * no signal reliably detects an incomplete pipeline answer.
+     */
+    async function escalate(messageId: number, conversationId: number) {
+        sending.value = true
+        escalating.value = true
+        error.value = null
+        status.value = null
+        agentSearches.value = []
+
+        try {
+            const { stream_id } = await chatApi.escalate(conversationId, messageId)
+            await streamReply(stream_id)
+        } catch (e: any) {
+            error.value = e?.response?.data?.message ?? e?.message ?? 'Продлабоченото истражување не успеа.'
+            throw e
+        } finally {
+            sending.value = false
+            escalating.value = false
+            status.value = null
+        }
+    }
+
+    /**
      * Subscribe to the SSE relay for a stream id. Resolves on `done`, rejects on
      * `error`. Chunks are appended to an assistant bubble created lazily on the
      * first token (so "Thinking..." shows until then). The bubble carries a
@@ -103,10 +137,23 @@ export const useChatStore = defineStore('chat', () => {
             source.onmessage = (event: MessageEvent) => {
                 const data = JSON.parse(event.data as string)
                 if (data.type === 'status') {
-                    status.value =
-                        data.stage === 'generating'
-                            ? `Се подготвува резиме од ${data.chunk_count ?? 0} одредби...`
-                            : 'Пребарување на прописите...'
+                    if (data.stage === 'agent_started') {
+                        status.value = 'Започнува продлабочено истражување...'
+                    } else if (data.stage === 'agent_search') {
+                        // Show the query itself, as it is issued. The sources land
+                        // on the same entry when its `agent_result` arrives.
+                        agentSearches.value.push({ tool: data.tool ?? '', query: data.query ?? '', sources: null })
+                        status.value = `Пребарувам: ${data.query ?? ''}`
+                    } else if (data.stage === 'agent_result') {
+                        const pending = agentSearches.value.filter((s) => s.sources === null)
+                        const target = pending[0]
+                        if (target) target.sources = (data.sources ?? []) as string[]
+                    } else {
+                        status.value =
+                            data.stage === 'generating'
+                                ? `Се подготвува резиме од ${data.chunk_count ?? 0} одредби...`
+                                : 'Пребарување на прописите...'
+                    }
                 } else if (data.type === 'chunk') {
                     status.value = null
                     messages.value[bubbleIndex()].content += data.text
@@ -125,6 +172,14 @@ export const useChatStore = defineStore('chat', () => {
                         retrieval_ms: (data.retrieval_ms ?? null) as number | null,
                         total_ms: (data.total_ms ?? null) as number | null,
                         total_latency_ms: (data.total_ms ?? null) as number | null,
+                        // Present only on an escalation; the response component
+                        // branches on `agent` to label which path produced this.
+                        agent: data.agent === true,
+                        run_id: (data.run_id ?? null) as string | null,
+                        searches: (data.searches ?? []) as Array<{ tool: string; query: string }>,
+                        agent_steps: (data.agent_steps ?? 0) as number,
+                        agent_api_calls: (data.agent_api_calls ?? 0) as number,
+                        agent_tokens: (data.agent_tokens ?? 0) as number,
                     }
                     source.close()
                     resolve()
@@ -144,7 +199,8 @@ export const useChatStore = defineStore('chat', () => {
     function reset() {
         messages.value = []
         error.value = null
+        agentSearches.value = []
     }
 
-    return { messages, sending, error, status, send, setMessages, reset }
+    return { messages, sending, error, status, agentSearches, escalating, send, escalate, setMessages, reset }
 })

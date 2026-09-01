@@ -21,6 +21,10 @@ export type Config = {
     sessionTtlMs: number
     /** Cross-session user memory injected into the system prompt; empty = off. */
     memoryNote: string
+    /** Shared secret the HTTP service (server.ts) requires; empty = service off. */
+    serviceToken: string
+    /** Port the HTTP service listens on. */
+    servicePort: number
 }
 
 const DEFAULT_MAX_STEPS = 8
@@ -79,6 +83,10 @@ export function loadConfig(overrides: { maxSteps?: number } = {}): Config {
         // AGENT_MEMORY_NOTE is set (inline, or "@path" to read a UTF-8 file);
         // off by default.
         memoryNote: resolveMemoryNote(env.AGENT_MEMORY_NOTE ?? ''),
+        // The HTTP service's bearer secret. Only server.ts reads it; the CLI
+        // does not need it, so loadConfig never treats it as required.
+        serviceToken: (env.AGENT_SERVICE_TOKEN ?? '').trim(),
+        servicePort: toPositiveInt(env.AGENT_SERVICE_PORT, 5060),
     }
 }
 

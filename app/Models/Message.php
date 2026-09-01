@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 #[Fillable(['role', 'content', 'model', 'latency_ms', 'tokens', 'metadata', 'stream_id'])]
 class Message extends Model
@@ -26,5 +27,16 @@ class Message extends Model
     public function conversation(): BelongsTo
     {
         return $this->belongsTo(Conversation::class);
+    }
+
+    /**
+     * The agent trajectory behind this message, when it was produced by an
+     * escalation rather than the pipeline. Null for every pipeline reply.
+     *
+     * @return HasOne<AgentRun, $this>
+     */
+    public function agentRun(): HasOne
+    {
+        return $this->hasOne(AgentRun::class);
     }
 }

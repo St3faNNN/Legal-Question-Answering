@@ -8,6 +8,7 @@
     },
     "scripts": {
         "agent": "node src/main.ts",
+        "serve": "node src/server.ts",
         "inspector": "node src/inspector.ts",
         "test": "node --test",
         "typecheck": "tsc --noEmit -p tsconfig.json"

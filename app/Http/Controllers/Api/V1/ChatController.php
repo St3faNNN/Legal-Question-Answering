@@ -3,11 +3,13 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Chat\EscalateRequest;
 use App\Http\Requests\Chat\SendMessageRequest;
 use App\Http\Resources\ConversationResource;
 use App\Http\Resources\MessageResource;
 use App\Jobs\StreamChatReply;
 use App\Services\Chat\ChatService;
+use App\Services\Chat\EscalationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Redis;
@@ -15,7 +17,10 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class ChatController extends Controller
 {
-    public function __construct(private readonly ChatService $service) {}
+    public function __construct(
+        private readonly ChatService $service,
+        private readonly EscalationService $escalation,
+    ) {}
 
     /**
      * Send a message
@@ -77,6 +82,49 @@ class ChatController extends Controller
         return response()->json([
             'conversation' => new ConversationResource($result['conversation']),
             'stream_id' => $result['stream_id'],
+        ], 202);
+    }
+
+    /**
+     * Escalate an answer to the research agent
+     *
+     * Re-answers the question behind an existing assistant message with the
+     * multi-hop agent instead of the single retrieve-then-generate pipeline. The
+     * run costs several times a normal answer, so it is charged against the daily
+     * generation budget (429 when that is spent) and rate-limited separately.
+     *
+     * Returns immediately with a stream id; the browser subscribes to the SAME
+     * SSE endpoint the pipeline uses, and receives one `agent_search` status per
+     * query as the agent issues it, then the answer.
+     *
+     * Refused with 422 where the agent has nothing to add: a gated greeting, an
+     * out-of-corpus refusal, or an answer that is already an escalation.
+     *
+     * @group Chat
+     *
+     * @authenticated
+     *
+     * @bodyParam conversation_id int required The conversation holding the answer. Example: 1
+     * @bodyParam message_id int required The assistant message to escalate. Example: 4
+     *
+     * @response 202 {"conversation":{"id":1},"stream_id":"9b1c...","escalated_from":4,"cost_units":3,"remaining_units":54}
+     */
+    public function escalate(EscalateRequest $request): JsonResponse
+    {
+        $validated = $request->validated();
+
+        $result = $this->escalation->escalate(
+            $request->user(),
+            $validated['conversation_id'],
+            $validated['message_id'],
+        );
+
+        return response()->json([
+            'conversation' => new ConversationResource($result['conversation']),
+            'stream_id' => $result['stream_id'],
+            'escalated_from' => $result['message_id'],
+            'cost_units' => $result['cost'],
+            'remaining_units' => $result['remaining'],
         ], 202);
     }
 

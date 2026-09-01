@@ -3,11 +3,13 @@
 namespace App\Providers;
 
 use App\Contracts\GeneratesReplies;
+use App\Contracts\RunsLegalResearch;
 use App\Grpc\GenerationClient;
 use App\Grpc\GrpcGenerationClient;
 use App\Grpc\GrpcRetrievalClient;
 use App\Grpc\OpenAiCompatibleGenerationClient;
 use App\Grpc\RetrievalClient;
+use App\Services\Agent\HttpAgentClient;
 use App\Services\Chat\GraphRagGrpcReplyGenerator;
 use App\Services\Chat\GraphRagReplyGenerator;
 use App\Services\Chat\PlaceholderReplyGenerator;
@@ -71,6 +73,18 @@ class AppServiceProvider extends ServiceProvider
                 (int) config('ai.timeout', 30),
             );
         });
+
+        // The escalation path. Bound lazily like the two above, so a deploy
+        // without an agent service never constructs a client — EscalationService
+        // refuses at the boundary instead, and no button is offered. The
+        // implementation is HTTP because the agent is TypeScript and stays that
+        // way; see HttpAgentClient for the bridging decision. Tests bind a fake.
+        $this->app->bind(RunsLegalResearch::class, fn (): RunsLegalResearch => new HttpAgentClient(
+            baseUrl: (string) config('agent.url'),
+            token: (string) config('agent.token'),
+            timeout: (int) config('agent.timeout', 120),
+            maxSteps: (int) config('agent.max_steps', 8),
+        ));
     }
 
     /**
@@ -83,5 +97,10 @@ class AppServiceProvider extends ServiceProvider
         RateLimiter::for('register', fn (Request $request) => Limit::perMinute(5)->by($request->ip()));
 
         RateLimiter::for('chat', fn (Request $request) => Limit::perMinute(30)->by($request->user()?->id ?: $request->ip()));
+
+        // An agent run measured 25,397 tokens against ~8k for a pipeline answer,
+        // and takes ~7.5s of wall clock rather than ~2.6s. Five a minute bounds
+        // the burst; the daily unit budget (GenerationBudget) bounds the spend.
+        RateLimiter::for('escalate', fn (Request $request) => Limit::perMinute(5)->by($request->user()?->id ?: $request->ip()));
     }
 }

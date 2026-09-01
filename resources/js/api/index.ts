@@ -9,6 +9,8 @@ export interface User {
     created_at: string
     updated_at: string
     last_active_at: string | null
+    /** Deploy capabilities; escalation is absent unless an agent service is configured. */
+    features?: { escalation: boolean }
 }
 
 export interface LoginPayload {
@@ -123,6 +125,34 @@ export interface RetrievedChunk {
     score: number | null
 }
 
+/** One tool call the agent issued, as it appears live and in a stored trace. */
+export interface AgentSearch {
+    tool: string
+    query: string
+    /** Citations returned; null while the search is still running. */
+    sources: string[] | null
+}
+
+/** One step of a stored agent trajectory. */
+export interface AgentTraceStep {
+    index: number
+    durationMs: number | null
+    tokens: number | null
+    reasoning: string | null
+    calls: Array<{ tool: string; query: string; sources: string[]; error: string | null }>
+}
+
+export interface AgentTrace {
+    run_id: string
+    question: string
+    outcome: string
+    model: string | null
+    totals: { steps: number; api_calls: number; total_tokens: number; duration_ms: number }
+    steps: AgentTraceStep[]
+    passages: RetrievedChunk[]
+    created_at: string
+}
+
 export interface MessageMetadata {
     entities?: string[]
     triple_count?: number
@@ -141,6 +171,21 @@ export interface MessageMetadata {
     retrieval_ms?: number | null
     /** Request received -> final token (ms); alias of total_latency_ms. */
     total_ms?: number | null
+    /** Non-legal input answered from a canned message: no retrieval, no model call. */
+    gated?: boolean
+    /** The answer is out-of-corpus; the provisions panel is suppressed server-side. */
+    refused?: boolean
+    /** True when the agent produced this answer rather than the pipeline. */
+    agent?: boolean
+    run_id?: string | null
+    /** The queries the run issued, kept so they survive a reload. */
+    searches?: Array<{ tool: string; query: string }>
+    agent_steps?: number
+    agent_api_calls?: number
+    agent_tokens?: number
+    /** Articles the answer cites that no retrieved passage backs. */
+    uncited_articles?: string[]
+    escalated_from_message_id?: number | null
     [key: string]: unknown
 }
 
@@ -204,6 +249,27 @@ export const chatApi = {
             stream_id: string
         }>('/chat/stream', { message, conversation_id: conversationId })
         return data
+    },
+
+    // Re-answer the question behind an existing reply with the research agent.
+    // Same stream contract as above — the events differ, not the transport.
+    async escalate(conversationId: number, messageId: number) {
+        const { data } = await client.post<{
+            conversation: Conversation
+            stream_id: string
+            escalated_from: number
+            cost_units: number
+            remaining_units: number
+        }>('/chat/escalate', { conversation_id: conversationId, message_id: messageId })
+        return data
+    },
+
+    // The stored trajectory behind an escalated answer.
+    async trace(conversationId: number, messageId: number) {
+        const { data } = await client.get<{ data: AgentTrace }>(
+            `/conversations/${conversationId}/messages/${messageId}/trace`,
+        )
+        return data.data
     },
 }
 

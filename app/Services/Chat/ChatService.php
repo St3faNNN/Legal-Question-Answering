@@ -3,6 +3,7 @@
 namespace App\Services\Chat;
 
 use App\Contracts\GeneratesReplies;
+use App\Exceptions\GenerationBudgetExceededException;
 use App\Jobs\StreamChatReply;
 use App\Models\Conversation;
 use App\Models\Message;
@@ -20,7 +21,27 @@ class ChatService
         private readonly GeneratesReplies $generator,
         private readonly ConversationService $conversations,
         private readonly AiLogger $logger,
+        private readonly GenerationBudget $budget,
+        private readonly NonLegalInputGate $gate,
     ) {}
+
+    /**
+     * Charge one pipeline answer against the shared daily budget, unless the
+     * input is one the gate will answer from a canned message — that path makes
+     * no retrieval and no model call, so it costs nothing and is charged nothing.
+     * The gate is consulted here as well as in the reply path; it is a pure
+     * string check, so asking twice is free and neither call changes behaviour.
+     *
+     * @throws GenerationBudgetExceededException
+     */
+    private function chargeForAnswer(User $user, string $content): void
+    {
+        if ($this->gate->shouldGate($content)) {
+            return;
+        }
+
+        $this->budget->spend($user, $this->budget->pipelineCost());
+    }
 
     /**
      * Send a user message, generate a reply, and persist both.
@@ -29,6 +50,13 @@ class ChatService
      */
     public function sendMessage(User $user, string $content, ?int $conversationId = null): array
     {
+        // Charged before anything is persisted, so a request over the daily cap
+        // is refused without leaving a user message behind that never gets a
+        // reply. An escalation is charged from the same meter at three times this
+        // (see config/agent.php), which is what makes it cost something relative
+        // to a normal question.
+        $this->chargeForAnswer($user, $content);
+
         // Resolving/creating the conversation and persisting the user message
         // are atomic. Generation runs afterwards so the user message survives a
         // downstream AI-service failure (see AiServiceException).
@@ -86,6 +114,8 @@ class ChatService
         // even persisted, and carry it into the job so it can measure through to
         // the final generated word across the web->worker boundary.
         $receivedAt = microtime(true);
+
+        $this->chargeForAnswer($user, $content);
 
         $conversation = DB::transaction(function () use ($user, $content, $conversationId): Conversation {
             $conversation = $conversationId !== null

@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, nextTick, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import AgentProgress from '@/components/AgentProgress.vue'
 import AppShell from '@/components/AppShell.vue'
 import AssistantResponse from '@/components/AssistantResponse.vue'
+import { useAuthStore } from '@/stores/auth'
 import { useChatStore } from '@/stores/chat'
 import { useConversationStore } from '@/stores/conversations'
 import type { Message } from '@/api'
@@ -11,6 +13,11 @@ const route = useRoute()
 const router = useRouter()
 const chat = useChatStore()
 const conversations = useConversationStore()
+const auth = useAuthStore()
+
+// Whether this deploy has a research agent at all. Absent = no control rendered,
+// rather than one the backend would refuse.
+const escalationAvailable = computed(() => auth.user?.features?.escalation === true)
 
 const input = ref('')
 const thread = ref<HTMLElement | null>(null)
@@ -20,12 +27,21 @@ const currentConversationId = ref<number | undefined>(undefined)
 // Show "Thinking..." only until the first streamed token arrives — once the
 // assistant bubble starts filling, it becomes the progress indicator.
 const awaitingFirstToken = computed(
-    () => chat.sending && (chat.messages.length === 0 || chat.messages[chat.messages.length - 1].role === 'user'),
+    () =>
+        chat.sending &&
+        !chat.escalating &&
+        (chat.messages.length === 0 || chat.messages[chat.messages.length - 1].role === 'user'),
 )
 
 // Keep the newest tokens in view as the reply streams in.
 watch(() => chat.messages[chat.messages.length - 1]?.content, () => {
     if (chat.sending) scrollToBottom()
+})
+
+// Each new search should bring itself into view, the same way a streaming token
+// does — the agent's progress IS the search list.
+watch(() => chat.agentSearches.length, () => {
+    if (chat.escalating) scrollToBottom()
 })
 
 async function loadConversation(id: number) {
@@ -121,6 +137,23 @@ async function handleSubmit() {
         // Send failed and the optimistic bubble was rolled back — restore the
         // text so the user can retry. Error is shown via chat.error.
         input.value = message
+    }
+}
+
+/**
+ * Escalate one answer to the research agent. The agent's reply joins the thread
+ * as its own message rather than replacing the pipeline's, so both are on the
+ * record and the difference is inspectable.
+ */
+async function handleEscalate(messageId: number) {
+    if (chat.sending || currentConversationId.value === undefined) return
+
+    try {
+        await chat.escalate(messageId, currentConversationId.value)
+    } catch {
+        // The error is surfaced through chat.error below.
+    } finally {
+        await scrollToBottom()
     }
 }
 
@@ -233,8 +266,24 @@ function isStreaming(msg: Message): boolean {
                          machine-generated summary subordinate and a persistent
                          notice. Wider than the user bubble — the article text
                          shown open needs the room. -->
-                    <AssistantResponse v-else :msg="msg" :streaming="isStreaming(msg)" />
+                    <AssistantResponse
+                        v-else
+                        :msg="msg"
+                        :streaming="isStreaming(msg)"
+                        :escalation-available="escalationAvailable"
+                        :busy="chat.sending"
+                        :conversation-id="currentConversationId"
+                        @escalate="handleEscalate"
+                    />
                 </div>
+
+                <!-- A running escalation: the searches as they are issued. Not a
+                     spinner — the agent streams no tokens, so the queries are the
+                     only honest progress there is. -->
+                <div v-if="chat.escalating" class="flex justify-start">
+                    <AgentProgress :searches="chat.agentSearches" :running="chat.escalating" />
+                </div>
+
                 <div v-if="awaitingFirstToken" class="flex justify-start">
                     <div class="bg-gray-200 dark:bg-gray-800 text-gray-500 dark:text-gray-400 px-4 py-3 rounded-2xl rounded-bl-sm">
                         <p class="text-sm">{{ chat.status ?? 'Се обработува...' }}</p>

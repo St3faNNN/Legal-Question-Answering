@@ -84,6 +84,42 @@ not Redis — the agent is a zero-dependency local CLI). It resumes from a fresh
 process, expires lazily (`AGENT_SESSION_TTL_HOURS`, default 72), and **rejects** a
 second turn while one is running rather than racing.
 
+## As a service (the app's escalation path)
+
+The same loop also runs as a small HTTP service, which is how the web app reaches
+it — a user escalates one chat answer and the agent re-answers the question.
+
+```bash
+AGENT_SERVICE_TOKEN=<secret> node src/server.ts    # listens on :5060
+curl -N -X POST http://localhost:5060/run \
+  -H "Authorization: Bearer <secret>" -H 'Content-Type: application/json' \
+  -d '{"question":"Кои се основите за отказ поради технолошки вишок?"}'
+```
+
+`POST /run` streams **NDJSON** as the run happens, so the caller can show each
+search while it is being issued rather than waiting ~7s behind a spinner:
+
+```
+{"type":"search","step":0,"tool":"search_law","query":"технолошки вишок отказ испратнина"}
+{"type":"result","step":0,"tool":"search_law","sources":["ZAKON-ZA-RABOTNI, чл. 97 ст. (1)-(5)", …]}
+{"type":"done","runId":"…","outcome":"answered","answer":"…","totals":{…},"passages":[…],"steps":[…]}
+```
+
+It is a **transport around the CLI, not a second implementation**: same
+`runAgent`, same prompt, same tools, same trace written to `runs/`. `agent.ts`
+did not change to make this work — `Trace` grew an optional progress listener,
+and that is all.
+
+In Docker it is an opt-in service (`docker compose --profile agent up -d`) on
+`node:24-alpine` with the source bind-mounted: zero runtime dependencies means
+there is nothing to install or build. Its runs land in `runs/` on the host, so a
+run started from the web app opens in the inspector below.
+
+| Variable | Meaning | Default |
+| --- | --- | --- |
+| `AGENT_SERVICE_TOKEN` | bearer secret `/run` requires; unset = refuse everything | — |
+| `AGENT_SERVICE_PORT` | listen port | `5060` |
+
 ## Inspect a run
 
 ```bash

@@ -64,6 +64,20 @@ Route::prefix('v1')->group(function (): void {
         Route::get('/conversations/{id}/messages', [MessageController::class, 'index']);
     });
 
+    // Escalation to the research agent. Its own throttle, far tighter than the
+    // chat one: a run costs several times a normal answer, so the per-minute
+    // burst limit is sized to that, on top of the shared daily unit budget the
+    // service charges (config/agent.php).
+    Route::middleware(['auth:sanctum', 'throttle:escalate'])->group(function (): void {
+        Route::post('/chat/escalate', [ChatController::class, 'escalate']);
+    });
+
+    // The trajectory behind one escalated answer, so a run is inspectable after
+    // the fact rather than only while it streams.
+    Route::middleware('auth:sanctum')->group(function (): void {
+        Route::get('/conversations/{conversationId}/messages/{messageId}/trace', [MessageController::class, 'trace']);
+    });
+
     // SSE relay for a streamed reply. Auth only (no chat throttle): it is a
     // long-lived relay, and EventSource authenticates via the session cookie.
     Route::middleware('auth:sanctum')->group(function (): void {

@@ -19,6 +19,19 @@ export type StepRecord = {
 
 export type Outcome = 'running' | 'answered' | 'exhausted'
 
+/**
+ * Progress emitted as the run happens, for a caller that cannot wait for the
+ * finished trace — the HTTP service (server.ts) forwards these so the web app
+ * can show each search as it is issued rather than a spinner. The shapes mirror
+ * what the inspector renders from a finished trace: the tool call, then the
+ * citations it returned.
+ */
+export type TraceEvent =
+    | { type: 'search'; step: number; tool: string; args: string }
+    | { type: 'result'; step: number; tool: string; sources: string[]; error: string | null }
+
+export type TraceListener = (event: TraceEvent) => void
+
 export type TraceData = {
     runId: string
     question: string
@@ -43,9 +56,11 @@ const RUN_ID_PATTERN = /^[0-9]{8}-[0-9]{6}-[a-z0-9]{4,8}$/
 export class Trace {
     data: TraceData
     private readonly dir: string
+    private readonly listener: TraceListener | null
 
-    constructor(runsDir: string, question: string, model: string, maxSteps: number) {
+    constructor(runsDir: string, question: string, model: string, maxSteps: number, onEvent?: TraceListener) {
         this.dir = runsDir
+        this.listener = onEvent ?? null
         this.data = {
             runId: newRunId(),
             question,
@@ -79,6 +94,10 @@ export class Trace {
             toolResults: [],
         })
         this.flush()
+
+        for (const call of assistant.tool_calls ?? []) {
+            this.emit({ type: 'search', step: index, tool: call.function.name, args: call.function.arguments })
+        }
     }
 
     /** Record one tool result under the step that requested it. */
@@ -95,6 +114,14 @@ export class Trace {
             result,
         })
         this.flush()
+
+        this.emit({
+            type: 'result',
+            step: index,
+            tool: call.function.name,
+            sources: citationsOf(result),
+            error: typeof result === 'object' && result !== null && 'error' in result ? String(result.error) : null,
+        })
     }
 
     finishAnswered(answer: string | null): TraceData {
@@ -133,9 +160,45 @@ export class Trace {
         return resolve(this.dir, `${this.data.runId}.json`)
     }
 
+    /** Notify the listener, if any. A listener failure must not kill the run. */
+    private emit(event: TraceEvent): void {
+        try {
+            this.listener?.(event)
+        } catch {
+            // A broken consumer (a disconnected HTTP client) is not the run's problem.
+        }
+    }
+
     private flush(): void {
         writeFileSync(this.path(), JSON.stringify(this.data, null, 2), 'utf8')
     }
+}
+
+/**
+ * The article citations a tool result names — passage `source` fields for
+ * search_law, `citation` fields for follow_references. Identifiers only: this
+ * feeds a progress event, not the answer.
+ */
+function citationsOf(result: unknown): string[] {
+    if (typeof result !== 'object' || result === null) {
+        return []
+    }
+
+    const rows = (result as { results?: unknown }).results ?? (result as { references?: unknown }).references
+    if (!Array.isArray(rows)) {
+        return []
+    }
+
+    return rows
+        .map((row: unknown) => {
+            if (typeof row !== 'object' || row === null) {
+                return ''
+            }
+            const record = row as { source?: unknown; citation?: unknown }
+
+            return String(record.source ?? record.citation ?? '')
+        })
+        .filter((citation) => citation !== '')
 }
 
 function newRunId(): string {

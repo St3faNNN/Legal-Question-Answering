@@ -97,6 +97,18 @@ x-laravel-env: &laravel-env
   # first token and a full answer well under 30s, so 30s surfaces a stalled
   # stream inside a minute without truncating a legitimate long reply.
   LLM_TIMEOUT: ${LLM_TIMEOUT:-30}
+  # The escalation path: where the research agent's HTTP service lives, and the
+  # shared secret it requires. Both must be set for the app to offer escalation
+  # at all — EscalationService::isConfigured() gates the UI control on them, so a
+  # deploy without the "agent" profile simply shows no button. See the agent
+  # service below.
+  AGENT_SERVICE_URL: ${AGENT_SERVICE_URL:-http://agent:5060}
+  AGENT_SERVICE_TOKEN: ${AGENT_SERVICE_TOKEN:-}
+  AGENT_SERVICE_TIMEOUT: ${AGENT_SERVICE_TIMEOUT:-120}
+  AGENT_MAX_STEPS: ${AGENT_MAX_STEPS:-8}
+  # One daily meter for both answer paths, in units: a pipeline answer costs 1,
+  # an agent escalation 4 (measured at a mean 4.3x the tokens). 0 disables it.
+  GENERATION_DAILY_UNITS: ${GENERATION_DAILY_UNITS:-60}
 
 # The app source, mounted into the laravel and worker containers so a PHP or
 # built-asset change takes effect on restart rather than requiring a full image
@@ -286,6 +298,60 @@ services:
     # SSE stream would block every other request. Seed the news once after
     # migrate (best-effort) so the dashboard has data before the hourly schedule.
     command: sh -c "php artisan migrate --force && (php artisan news:scrape || true) && php artisan serve --host=0.0.0.0 --port=8000 --no-reload"
+
+  # The multi-hop research agent, reached by the app over HTTP (POST /run,
+  # streaming NDJSON). Opt-in via the "agent" profile, like the local-llm one,
+  # because it needs a Sanctum token minted by hand:
+  #
+  #   php artisan tinker --execute 'echo App\Models\User::first()->createToken("agent")->plainTextToken;'
+  #   # then, in .env:  AGENT_API_TOKEN=<paste>  AGENT_SERVICE_TOKEN=<any secret>
+  #   docker compose --profile agent up -d
+  #
+  # It is TypeScript and stays TypeScript — the hand-written loop in
+  # agent/src/agent.ts is the artefact — so it runs as its own process rather
+  # than being ported to PHP or shelled out to from the queue worker. The app
+  # image is php:8.4-cli with no Node, and adding Node would recompile the grpc
+  # PECL extension from source (~an hour, see the note above x-app-source).
+  #
+  # The agent has zero runtime dependencies, so this is the stock node image plus
+  # a bind mount: no npm install, no build step, Node's native TypeScript. The
+  # mount is read-write on purpose — traces land in ./agent/runs on the host, so
+  # a run started from the web app is readable in the CLI trace inspector
+  # (node src/inspector.ts).
+  #
+  # Not published to the host: it spends real tokens and is only ever called by
+  # the worker, over the Compose network. It still requires AGENT_SERVICE_TOKEN
+  # on every request regardless.
+  agent:
+    image: node:24-alpine
+    profiles: ["agent"]
+    restart: unless-stopped
+    working_dir: /var/www/html/agent
+    volumes:
+      - ./agent:/var/www/html/agent
+    environment:
+      # The agent reuses the app's LLM_* keys so it talks to the same endpoint
+      # the chat flow does.
+      LLM_BASE_URL: ${LLM_BASE_URL:-https://generativelanguage.googleapis.com/v1beta/openai/}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-gemini-flash-lite-latest}
+      # Its tools ARE this app's endpoints — the agent calls back in over the
+      # Compose network, authenticating with a Sanctum personal access token.
+      AGENT_APP_URL: http://laravel:8000
+      AGENT_API_TOKEN: ${AGENT_API_TOKEN:-}
+      AGENT_SERVICE_TOKEN: ${AGENT_SERVICE_TOKEN:-}
+      AGENT_SERVICE_PORT: "5060"
+      AGENT_MAX_STEPS: ${AGENT_MAX_STEPS:-8}
+    depends_on:
+      laravel:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5060/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      start_period: 10s
+      retries: 5
+    command: node src/server.ts
 
   worker:
     build: .
