@@ -2,6 +2,7 @@
 
 namespace App\Http\Resources;
 
+use App\Http\Middleware\EnsureUserIsAdmin;
 use App\Models\User;
 use App\Services\Chat\EscalationService;
 use Illuminate\Http\Request;
@@ -29,6 +30,10 @@ class UserResource extends JsonResource
             // without one, no button is rendered rather than one that 422s.
             'features' => [
                 'escalation' => app(EscalationService::class)->isConfigured(),
+                // Whether to render the dashboard link. NOT the access control —
+                // that is EnsureUserIsAdmin on the admin routes, which 404s
+                // regardless of what the client believes.
+                'admin' => EnsureUserIsAdmin::isAdmin($request),
             ],
         ];
     }

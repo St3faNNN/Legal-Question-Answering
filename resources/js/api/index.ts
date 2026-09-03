@@ -10,7 +10,7 @@ export interface User {
     updated_at: string
     last_active_at: string | null
     /** Deploy capabilities; escalation is absent unless an agent service is configured. */
-    features?: { escalation: boolean }
+    features?: { escalation: boolean; admin: boolean }
 }
 
 export interface LoginPayload {
@@ -253,14 +253,24 @@ export const chatApi = {
 
     // Re-answer the question behind an existing reply with the research agent.
     // Same stream contract as above — the events differ, not the transport.
-    async escalate(conversationId: number, messageId: number) {
+    //
+    // `questionMessageId` is required. The server will not infer which question
+    // an answer belongs to: it used to, by walking back to the nearest preceding
+    // user message, and that walk returned the conversation's FIRST question
+    // instead of the escalated one. The thread is rendered here, so the pairing
+    // is known here; the server validates it rather than guessing.
+    async escalate(conversationId: number, messageId: number, questionMessageId: number) {
         const { data } = await client.post<{
             conversation: Conversation
             stream_id: string
             escalated_from: number
             cost_units: number
             remaining_units: number
-        }>('/chat/escalate', { conversation_id: conversationId, message_id: messageId })
+        }>('/chat/escalate', {
+            conversation_id: conversationId,
+            message_id: messageId,
+            question_message_id: questionMessageId,
+        })
         return data
     },
 
@@ -304,6 +314,130 @@ export interface NewsArticle {
 export const newsApi = {
     async latest(limit = 3) {
         const { data } = await client.get<{ data: NewsArticle[] }>('/news', { params: { limit } })
+        return data.data
+    },
+}
+
+/** One latency series, always carrying the sample it was computed from. */
+export interface Distribution {
+    available: boolean
+    n: number
+    out_of: number
+    coverage?: number
+    min?: number
+    p50?: number
+    p90?: number
+    p95?: number
+    p99?: number
+    max?: number
+    histogram?: Array<{ label: string; count: number }>
+}
+
+export interface AdminMetrics {
+    generated_at: string
+    window: { days: number; from: string; to: string }
+    volume: {
+        questions: number
+        answers: number
+        conversations: number
+        users_active: number
+        by_path: Record<string, number>
+        daily: Array<Record<string, number> & { date: string; total: number }>
+    }
+    latency: Record<'retrieval_ms' | 'ttft_ms' | 'total_ms' | 'generation_latency_ms', Distribution> & {
+        total_messages: number
+        by_model: Array<{ model: string; answers: number; p50_ms: number | null; p95_ms: number | null; last_seen: string | null }>
+        /** Audit line for the by-model table: answers that arrived without a model name. */
+        null_model: { count: number; out_of: number; gated_excluded: number; note: string }
+    }
+    tokens: {
+        escalation: { available: boolean; runs: number; total: number; mean: number | null; min: number | null; max: number | null }
+        // Deliberately not a number: the hosted driver streams and returns no
+        // usage block, so there is nothing to report and nothing to estimate.
+        pipeline: { available: false; reason: string; legacy_rows_with_tokens: number }
+        budget: {
+            daily_units: number
+            pipeline_cost: number
+            escalation_cost: number
+            today: Array<{ user_id: number; name: string; used: number; remaining: number }>
+        }
+    }
+    agent: {
+        runs: number
+        by_outcome: Record<string, number>
+        steps: { mean: number | null; min: number | null; max: number | null }
+        searches_per_run: { mean: number | null; min: number | null; max: number | null }
+        recent: Array<{
+            id: number; run_id: string; outcome: string; model: string | null
+            steps: number; api_calls: number; searches: number
+            total_tokens: number; duration_ms: number
+            message_id: number; conversation_id: number | null; created_at: string | null
+        }>
+    }
+    failures: {
+        refusals: { count: number; out_of: number; note: string }
+        gated: { count: number; out_of: number }
+        failed_jobs: { total: number; recent: Array<{ id: number; job: string; failed_at: string; reason: string }> }
+    }
+}
+
+/** A row in the exchange list. Carries NO question or answer text by design. */
+export interface AdminExchange {
+    id: number
+    conversation_id: number
+    created_at: string | null
+    path: string
+    model: string | null
+    retrieval_ms: number | null
+    ttft_ms: number | null
+    total_ms: number | null
+    latency_ms: number | null
+    chunk_count: number | null
+    context_items: number | null
+    tokens: number | null
+    agent_tokens: number | null
+    run_id: string | null
+    agent_run_id: number | null
+    citations: string[]
+    /** Count only — the query strings are question-adjacent and live in the detail. */
+    search_count: number
+    uncited_articles: string[]
+    question_chars: number | null
+    answer_chars: number
+}
+
+/** One exchange WITH its text — only ever fetched by an explicit action. */
+export interface AdminExchangeDetail extends AdminExchange {
+    searches: string[]
+    question: string | null
+    question_id: number | null
+    answer: string
+    metadata: MessageMetadata | null
+}
+
+export const adminApi = {
+    async metrics() {
+        const { data } = await client.get<{ data: AdminMetrics }>('/admin/metrics')
+        return data.data
+    },
+
+    // Metadata only. The text lives behind exchange() below.
+    async exchanges(path?: string, cursor?: string) {
+        const { data } = await client.get<{ data: AdminExchange[]; meta: { next_cursor: string | null } }>(
+            '/admin/exchanges',
+            { params: { path, cursor } },
+        )
+        return data
+    },
+
+    // The explicit action: read one exchange's question and answer.
+    async exchange(id: number) {
+        const { data } = await client.get<{ data: AdminExchangeDetail }>(`/admin/exchanges/${id}`)
+        return data.data
+    },
+
+    async trace(agentRunId: number) {
+        const { data } = await client.get<{ data: AgentTrace }>(`/admin/agent-runs/${agentRunId}/trace`)
         return data.data
     },
 }

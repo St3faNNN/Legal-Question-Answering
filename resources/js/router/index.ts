@@ -10,6 +10,10 @@ const routes: RouteRecordRaw[] = [
     { path: '/history', name: 'history', component: () => import('@/pages/History.vue'), meta: { auth: true } },
     { path: '/settings', name: 'settings', component: () => import('@/pages/Settings.vue'), meta: { auth: true } },
     { path: '/profile', name: 'profile', component: () => import('@/pages/Profile.vue'), meta: { auth: true } },
+    // Operational dashboard. `auth` only: the real gate is server-side on the
+    // data endpoints, which 404 for a non-allowlisted user, so this route renders
+    // an empty shell rather than leaking anything if someone types the URL.
+    { path: '/admin', name: 'admin', component: () => import('@/pages/admin/Metrics.vue'), meta: { auth: true } },
     { path: '/', name: 'landing', component: () => import('@/pages/Landing.vue'), meta: { guest: true } },
     // Legal documents — public, reachable whether signed in or not (no auth/guest meta).
     { path: '/privacy', name: 'privacy', component: () => import('@/pages/legal/PrivacyPolicy.vue') },

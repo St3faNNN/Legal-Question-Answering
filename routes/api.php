@@ -1,5 +1,7 @@
 <?php
 
+use App\Http\Controllers\Api\V1\Admin\ExchangeController;
+use App\Http\Controllers\Api\V1\Admin\MetricsController;
 use App\Http\Controllers\Api\V1\Auth\AccountController;
 use App\Http\Controllers\Api\V1\Auth\ApiTokenController;
 use App\Http\Controllers\Api\V1\Auth\AuthController;
@@ -12,6 +14,7 @@ use App\Http\Controllers\Api\V1\SettingsController;
 use App\Http\Controllers\Api\V1\TodoItemController;
 use App\Http\Controllers\Api\V1\TodoListController;
 use App\Http\Controllers\Api\V1\ToolController;
+use App\Http\Middleware\EnsureUserIsAdmin;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
@@ -104,9 +107,30 @@ Route::prefix('v1')->group(function (): void {
 
     // Agent tools — the retrieval pipeline as a callable tool. Its own throttle
     // (retrieval-only, no generation) keeps agent searches off the chat budget.
-    Route::middleware(['auth:sanctum', 'throttle:60,1'])->group(function (): void {
+    Route::middleware(['auth:sanctum', 'throttle:tools'])->group(function (): void {
         Route::post('/tools/search-law', [ToolController::class, 'searchLaw']);
         Route::post('/tools/follow-references', [ToolController::class, 'followReferences']);
+    });
+
+    // Operational dashboard. Read-only aggregation over the durable tables.
+    //
+    // The gate is server-side and 404s a non-allowlisted caller, so the panel's
+    // existence is not advertised (see EnsureUserIsAdmin). It is applied by class
+    // name rather than by a middleware alias because aliases are registered in
+    // bootstrap/app.php, which the Docker deploy does not mount — referencing the
+    // class keeps the whole gate inside the mounted tree.
+    //
+    // There is no server-rendered admin page to gate: routes/web.php serves one
+    // Blade shell for every path and the SPA routes client-side. These endpoints
+    // are therefore the entire boundary, and the client route shows nothing
+    // without them.
+    Route::middleware(['auth:sanctum', EnsureUserIsAdmin::class])->prefix('admin')->group(function (): void {
+        Route::get('/metrics', [MetricsController::class, 'overview']);
+        // Metadata only — no question or answer text. Reading the text is the
+        // separate, explicit request below.
+        Route::get('/exchanges', [ExchangeController::class, 'index']);
+        Route::get('/exchanges/{id}', [ExchangeController::class, 'show']);
+        Route::get('/agent-runs/{id}/trace', [ExchangeController::class, 'trace']);
     });
 
     // Namespace reservation for future: /api-keys

@@ -111,6 +111,17 @@ import { LEGAL_DOCUMENTS } from '@/legal/documents'
                 со атрибут SameSite=Lax; барањата од друг сајт се заштитени со CSRF-токени; а точките за најавување,
                 регистрација и разговор имаат ограничување на бројот на барања (rate limiting).
             </p>
+            <p>
+                <strong>Пристап на операторот до содржината на разговорите.</strong> Разговорите се чуваат во базата на
+                податоци на Услугата и <strong>операторот има техничка можност да ги прочита</strong> — вклучувајќи го
+                текстот на вашите прашања и на генерираните одговори. Тоа се користи за одржување и решавање проблеми
+                (на пример, испитување зошто одреден одговор бил неточен или зошто некое барање не успеало). Не се
+                користи за профилирање, за рекламирање, ниту се пренесува на трети страни надвор од обработувачите
+                наведени во точка 4. Внатрешниот панел за следење на работата на системот прикажува само технички
+                мерки (времетраење, број на пронајдени одредби, статус); текстот на прашањето се прикажува единствено
+                по изречно дејство, за еден разговор во даден момент. Ако не сакате едно прашање да остане запишано,
+                можете да го избришете разговорот или целата сметка (точка 7).
+            </p>
 
             <h2>10. Малолетни лица</h2>
             <p>
@@ -240,6 +251,16 @@ import { LEGAL_DOCUMENTS } from '@/legal/documents'
                 only). Additional technical measures: passwords are hashed with bcrypt; the session cookie is
                 HTTP-only with SameSite=Lax; cross-site requests are protected by CSRF tokens; and the login,
                 registration and chat endpoints are rate-limited.
+            </p>
+            <p>
+                <strong>Operator access to conversation content.</strong> Conversations are stored in the Service's
+                database and <strong>the operator is technically able to read them</strong> — including the text of your
+                questions and of the generated answers. This is used for maintenance and troubleshooting (for example,
+                investigating why a particular answer was wrong, or why a request failed). It is not used for profiling
+                or advertising, and it is not shared with third parties beyond the processors listed in section 4. The
+                internal operations panel displays technical measurements only (timings, number of retrieved provisions,
+                status); question text is shown only on an explicit action, one conversation at a time. If you do not
+                want a question to remain on record, you can delete the conversation or your entire account (section 7).
             </p>
 
             <h2>10. Minors</h2>
