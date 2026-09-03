@@ -51,8 +51,15 @@ message Triple {
   double confidence = 4;
 }
 
-// One reranked passage from the vector store. `source` is the corpus citation
-// the passage came from; `score` is the cross-encoder's relevance score.
+// One returned passage from the vector store. `source` is the corpus citation
+// the passage came from.
+//
+// `score` is the RRF fused score — a sum of reciprocal ranks across the dense,
+// sparse and graph arms — NOT a relevance probability. It orders passages
+// against each other within one response and means nothing across responses or
+// on its own: a high score says this passage beat the others, never that it is
+// relevant. It used to be a cross-encoder's relevance score, which WAS absolute;
+// that model was removed, and no consumer should read this field as a confidence.
 message Chunk {
   string id = 1;
   string text = 2;
@@ -66,7 +73,7 @@ message RetrieveResponse {
   repeated Triple triples = 3;
   int32 latency_ms = 4;
   repeated Chunk chunks = 5;
-  // How many reranked passages actually fit the context budget. Lower than the
-  // number of chunks when the budget cut the tail off.
+  // How many of the returned passages actually fit the context budget. Lower
+  // than the number of chunks when the budget cut the tail off.
   int32 context_items = 6;
 }

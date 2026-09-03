@@ -34,8 +34,8 @@ class RetrieveResponse extends \Google\Protobuf\Internal\Message
      */
     private $chunks;
     /**
-     * How many reranked passages actually fit the context budget. Lower than the
-     * number of chunks when the budget cut the tail off.
+     * How many of the returned passages actually fit the context budget. Lower
+     * than the number of chunks when the budget cut the tail off.
      *
      * Generated from protobuf field <code>int32 context_items = 6;</code>
      */
@@ -53,8 +53,8 @@ class RetrieveResponse extends \Google\Protobuf\Internal\Message
      *     @type int $latency_ms
      *     @type array<\App\Ai\Pb\Retrieval\Chunk>|\Google\Protobuf\Internal\RepeatedField $chunks
      *     @type int $context_items
-     *           How many reranked passages actually fit the context budget. Lower than the
-     *           number of chunks when the budget cut the tail off.
+     *           How many of the returned passages actually fit the context budget. Lower
+     *           than the number of chunks when the budget cut the tail off.
      * }
      */
     public function __construct($data = NULL) {
@@ -173,8 +173,8 @@ class RetrieveResponse extends \Google\Protobuf\Internal\Message
     }
 
     /**
-     * How many reranked passages actually fit the context budget. Lower than the
-     * number of chunks when the budget cut the tail off.
+     * How many of the returned passages actually fit the context budget. Lower
+     * than the number of chunks when the budget cut the tail off.
      *
      * Generated from protobuf field <code>int32 context_items = 6;</code>
      * @return int
@@ -185,8 +185,8 @@ class RetrieveResponse extends \Google\Protobuf\Internal\Message
     }
 
     /**
-     * How many reranked passages actually fit the context budget. Lower than the
-     * number of chunks when the budget cut the tail off.
+     * How many of the returned passages actually fit the context budget. Lower
+     * than the number of chunks when the budget cut the tail off.
      *
      * Generated from protobuf field <code>int32 context_items = 6;</code>
      * @param int $var

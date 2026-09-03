@@ -9,8 +9,14 @@ use Google\Protobuf\Internal\RepeatedField;
 use Google\Protobuf\Internal\GPBUtil;
 
 /**
- * One reranked passage from the vector store. `source` is the corpus citation
- * the passage came from; `score` is the cross-encoder's relevance score.
+ * One returned passage from the vector store. `source` is the corpus citation
+ * the passage came from.
+ * `score` is the RRF fused score — a sum of reciprocal ranks across the dense,
+ * sparse and graph arms — NOT a relevance probability. It orders passages
+ * against each other within one response and means nothing across responses or
+ * on its own: a high score says this passage beat the others, never that it is
+ * relevant. It used to be a cross-encoder's relevance score, which WAS absolute;
+ * that model was removed, and no consumer should read this field as a confidence.
  *
  * Generated from protobuf message <code>graphrag.retrieval.v1.Chunk</code>
  */
