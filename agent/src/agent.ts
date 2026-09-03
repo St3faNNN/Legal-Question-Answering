@@ -60,6 +60,15 @@ export async function runAgent(options: RunOptions): Promise<TraceData> {
 
         const toolCalls = choice.tool_calls ?? []
 
+        // A turn that ended because it ran out of output tokens can carry a tool
+        // call whose JSON arguments are cut off mid-string. Dispatching it runs a
+        // search for whatever survived the truncation, and the model then reasons
+        // over a plausible-looking result for a query it never finished writing.
+        // So every call in a truncated turn is failed instead of run — the model
+        // sees the error and reissues it. Same rule Pi applies; see
+        // agent/pi-comparison.md.
+        const truncated = response.choices[0]?.finish_reason === 'length'
+
         // (1) Append the assistant turn BEFORE any tool results. The API requires
         //     the message carrying tool_calls to immediately precede the tool
         //     replies that answer them.
@@ -77,6 +86,20 @@ export async function runAgent(options: RunOptions): Promise<TraceData> {
 
         for (const call of toolCalls) {
             let result: unknown
+
+            if (truncated) {
+                result = {
+                    error: 'The previous turn hit the output token limit, so this tool call may be '
+                        + 'incomplete and was not executed. Reissue it.',
+                }
+                const msgIndex = messages.length
+                messages.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify(result) })
+                toolEntries.push({ msgIndex, stepIndex: step, result })
+                trace.recordToolResult(step, call, result)
+
+                continue
+            }
+
             try {
                 // (3) A tool failure is data for the model, not a crash: it reads
                 //     the error and can rephrase. executeTool already returns
