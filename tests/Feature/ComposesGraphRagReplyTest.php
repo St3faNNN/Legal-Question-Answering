@@ -1,15 +1,32 @@
 <?php
 
-use App\Contracts\GeneratesReplies;
 use App\Exceptions\AiServiceException;
 use App\Grpc\GenerationClient;
 use App\Grpc\RetrievalClient;
+use App\Jobs\StreamChatReply;
+use App\Models\Conversation;
+use App\Models\Message;
 use App\Models\User;
-use App\Services\Chat\GraphRagGrpcReplyGenerator;
+use App\Services\Chat\NonLegalInputGate;
+use App\Services\Logging\AiLogger;
+use Illuminate\Support\Facades\Redis;
 
-use function Pest\Laravel\actingAs;
-use function Pest\Laravel\postJson;
-
+/**
+ * The reply composer (ComposesGraphRagReply), exercised through the only path
+ * that reaches it: the streaming job.
+ *
+ * These tests used to drive POST /api/v1/chat, the non-streaming endpoint. That
+ * endpoint is gone — the browser has streamed since the SSE relay landed, and
+ * keeping a second orchestration around meant the composer's invariants were
+ * verified on a path no user took. What they assert is unchanged: the panel
+ * equals the generation context, a refusal blanks the panel, a marker on a real
+ * answer does not, and passage text is truncated to a citation trail.
+ *
+ * What is deliberately NOT re-asserted here: the transport's failure contract.
+ * A retrieval throw propagating to failed_jobs, the terminal SSE error, and the
+ * post-first-token retry boundary all belong to the job rather than the
+ * composer, and StreamChatReplyTest covers them.
+ */
 beforeEach(function (): void {
     config(['ai.llm.timeout' => 5]);
 });
@@ -17,7 +34,7 @@ beforeEach(function (): void {
 /**
  * Bind a fake RetrievalClient whose retrieve() delegates to $handler.
  */
-function bindRetrievalClient(Closure $handler): void
+function bindComposerRetrieval(Closure $handler): void
 {
     app()->instance(RetrievalClient::class, new class($handler) implements RetrievalClient
     {
@@ -36,31 +53,45 @@ function bindRetrievalClient(Closure $handler): void
 }
 
 /**
- * Bind a fake GenerationClient whose generate() delegates to $handler.
+ * Bind a fake GenerationClient whose generateStream() delegates to $handler.
+ * The job only ever calls generateStream(); generate() exists to satisfy the
+ * interface and throws so a wrong-path call is loud rather than silent.
  */
-function bindGenerationClient(Closure $handler): void
+function bindComposerGeneration(Closure $streamHandler): void
 {
-    app()->instance(GenerationClient::class, new class($handler) implements GenerationClient
+    app()->instance(GenerationClient::class, new class($streamHandler) implements GenerationClient
     {
-        public function __construct(private readonly Closure $handler) {}
+        public function __construct(private readonly Closure $streamHandler) {}
 
         public function generate(string $question, string $context, ?string $entity, array $history): array
         {
-            return ($this->handler)($question, $context, $entity, $history);
+            throw new LogicException('the streaming path must not call generate()');
         }
 
         public function generateStream(string $question, string $context, ?string $entity, array $history): iterable
         {
-            return []; // unused by the unary generator under test
+            return ($this->streamHandler)($question, $context, $entity, $history);
         }
     });
 }
 
 /**
- * A hybrid retrieval result: reranked passages from the vector store plus the
+ * The common case: one answer delivered whole, then the terminating chunk that
+ * carries the model and token count.
+ */
+function bindComposerAnswer(string $answer, string $model = 'gemini-flash-lite-latest', int $tokens = 14): void
+{
+    bindComposerGeneration(function () use ($answer, $model, $tokens): iterable {
+        yield ['text' => $answer, 'done' => false, 'tokens' => 0, 'model' => ''];
+        yield ['text' => '', 'done' => true, 'tokens' => $tokens, 'model' => $model];
+    });
+}
+
+/**
+ * A hybrid retrieval result: ranked passages from the vector store plus the
  * cross-references the citation graph found between them.
  */
-function grpcRetrievalSuccess(): array
+function composerRetrievalSuccess(): array
 {
     return [
         'context' => "[ZAKON-A, чл. 1]\nРаботно време и распоред\n\n[ZAKON-A, чл. 3]\nПлата и надоместоци",
@@ -77,63 +108,73 @@ function grpcRetrievalSuccess(): array
     ];
 }
 
-function grpcGenerationSuccess(): array
+/** A retrieval response carrying $count ranked passages. */
+function composerRankedChunks(int $count): array
 {
-    return [
-        'answer' => 'Работното време е уредено во [ZAKON-A, чл. 1].',
-        'model' => 'qwen2.5-1.5b-instruct',
-        'tokens' => 14,
-        'latency_ms' => 850,
-    ];
+    return collect(range(1, $count))
+        ->map(fn (int $i): array => [
+            'id' => (string) $i,
+            'text' => "текст {$i}",
+            'source' => "ZAKON-A, чл. {$i}",
+            'score' => 100.0 - $i,
+        ])
+        ->all();
 }
 
-describe('GraphRAG gRPC generator binding', function (): void {
-    it('resolves GraphRagGrpcReplyGenerator when the driver is grpc', function (): void {
-        bindRetrievalClient(fn (): array => grpcRetrievalSuccess());
-        bindGenerationClient(fn (): array => grpcGenerationSuccess());
+/**
+ * Run the streaming job against the currently bound fakes and return the
+ * assistant message it persisted. Redis is mocked away: the composer's output is
+ * the persisted row, and the published events are the job's concern.
+ */
+function composeReply(string $question = 'Колку е работното време?'): Message
+{
+    $conversation = Conversation::factory()->for(User::factory())->create();
 
-        expect(app(GeneratesReplies::class))->toBeInstanceOf(GraphRagGrpcReplyGenerator::class);
-    });
-});
+    Redis::shouldReceive('rpush')->andReturn(1);
+    Redis::shouldReceive('expire')->andReturnTrue();
+    Redis::shouldReceive('exists')->andReturn(0);
+    Redis::shouldReceive('setex')->andReturnTrue();
+
+    (new StreamChatReply($conversation->id, 'stream-compose', $question, microtime(true)))->handle(
+        app(RetrievalClient::class),
+        app(GenerationClient::class),
+        app(AiLogger::class),
+        app(NonLegalInputGate::class),
+    );
+
+    return $conversation->messages()->where('role', 'assistant')->firstOrFail();
+}
 
 describe('GraphRAG reply composition', function (): void {
     it('returns the generated reply and stores retrieval metadata', function (): void {
-        bindRetrievalClient(fn (): array => grpcRetrievalSuccess());
-        bindGenerationClient(fn (): array => grpcGenerationSuccess());
+        bindComposerRetrieval(fn (): array => composerRetrievalSuccess());
+        bindComposerAnswer('Работното време е уредено во [ZAKON-A, чл. 1].');
 
-        $user = User::factory()->create();
-        actingAs($user);
+        $message = composeReply();
 
-        $response = postJson('/api/v1/chat', ['message' => 'Колку е работното време?'])
-            ->assertCreated();
+        expect($message->role)->toBe('assistant')
+            ->and($message->content)->toBe('Работното време е уредено во [ZAKON-A, чл. 1].')
+            ->and($message->model)->toBe('gemini-flash-lite-latest')
+            ->and($message->tokens)->toBe(14);
 
-        expect($response->json('message.role'))->toBe('assistant')
-            ->and($response->json('message.content'))->toBe('Работното време е уредено во [ZAKON-A, чл. 1].')
-            ->and($response->json('message.model'))->toBe('qwen2.5-1.5b-instruct')
-            ->and($response->json('message.tokens'))->toBe(14);
-
-        $assistantMessage = $user->conversations()->first()->messages()->where('role', 'assistant')->first();
-
-        expect($assistantMessage->metadata['entities'])->toBe(['ZAKON-A, чл. 1', 'ZAKON-A, чл. 3'])
-            ->and($assistantMessage->metadata['triple_count'])->toBe(1)
-            ->and($assistantMessage->metadata['top_triples'])->toBe([
+        expect($message->metadata['entities'])->toBe(['ZAKON-A, чл. 1', 'ZAKON-A, чл. 3'])
+            ->and($message->metadata['triple_count'])->toBe(1)
+            ->and($message->metadata['top_triples'])->toBe([
                 ['head' => 'ZAKON-A, чл. 1', 'relation' => 'упатува на', 'tail' => 'ZAKON-A, чл. 3', 'confidence' => 0.75],
             ])
-            ->and($assistantMessage->metadata['context'])->toContain('Работно време и распоред')
-            ->and($assistantMessage->metadata['retrieval_latency_ms'])->toBe(12)
-            ->and($assistantMessage->metadata['generation_latency_ms'])->toBe(850);
+            ->and($message->metadata['context'])->toContain('Работно време и распоред')
+            // Retrieval reports its own service time; generation's is measured by
+            // the job around the stream, so it is a duration rather than a value
+            // the fake supplies.
+            ->and($message->metadata['retrieval_latency_ms'])->toBe(12)
+            ->and($message->metadata['generation_latency_ms'])->toBeGreaterThanOrEqual(0);
     });
 
-    it('stores the reranked passages as citations', function (): void {
-        bindRetrievalClient(fn (): array => grpcRetrievalSuccess());
-        bindGenerationClient(fn (): array => grpcGenerationSuccess());
+    it('stores the returned passages as citations', function (): void {
+        bindComposerRetrieval(fn (): array => composerRetrievalSuccess());
+        bindComposerAnswer('Работното време е уредено во [ZAKON-A, чл. 1].');
 
-        $user = User::factory()->create();
-        actingAs($user);
-
-        postJson('/api/v1/chat', ['message' => 'Колку е работното време?'])->assertCreated();
-
-        $metadata = $user->conversations()->first()->messages()->where('role', 'assistant')->first()->metadata;
+        $metadata = composeReply()->metadata;
 
         expect($metadata['chunk_count'])->toBe(2)
             ->and($metadata['context_items'])->toBe(2)
@@ -143,19 +184,6 @@ describe('GraphRAG reply composition', function (): void {
             ]);
     });
 
-    /** A retrieval response carrying $count ranked passages. */
-    function rankedChunks(int $count): array
-    {
-        return collect(range(1, $count))
-            ->map(fn (int $i): array => [
-                'id' => (string) $i,
-                'text' => "текст {$i}",
-                'source' => "ZAKON-A, чл. {$i}",
-                'score' => 100.0 - $i,
-            ])
-            ->all();
-    }
-
     it('shows every passage the generator read, not a shorter display slice', function (): void {
         // The bug this asserts against: the panel showed 5 while retrieval
         // returned 10, so an answer grounded in the passage at rank 6 cited a
@@ -163,15 +191,10 @@ describe('GraphRAG reply composition', function (): void {
         // compared the two numbers, so nothing caught it.
         config(['ai.retrieval_top_n' => 10]);
 
-        bindRetrievalClient(fn (): array => [...grpcRetrievalSuccess(), 'chunks' => rankedChunks(10)]);
-        bindGenerationClient(fn (): array => grpcGenerationSuccess());
+        bindComposerRetrieval(fn (): array => [...composerRetrievalSuccess(), 'chunks' => composerRankedChunks(10)]);
+        bindComposerAnswer('Одговор.');
 
-        $user = User::factory()->create();
-        actingAs($user);
-
-        postJson('/api/v1/chat', ['message' => 'Прашање?'])->assertCreated();
-
-        $metadata = $user->conversations()->first()->messages()->where('role', 'assistant')->first()->metadata;
+        $metadata = composeReply('Прашање?')->metadata;
 
         expect($metadata['chunk_count'])->toBe(10)
             ->and($metadata['top_chunks'])->toHaveCount(10)
@@ -184,15 +207,10 @@ describe('GraphRAG reply composition', function (): void {
         // stays put, the gap reopens silently — this is what stops that.
         config(['ai.retrieval_top_n' => 16]);
 
-        bindRetrievalClient(fn (): array => [...grpcRetrievalSuccess(), 'chunks' => rankedChunks(16)]);
-        bindGenerationClient(fn (): array => grpcGenerationSuccess());
+        bindComposerRetrieval(fn (): array => [...composerRetrievalSuccess(), 'chunks' => composerRankedChunks(16)]);
+        bindComposerAnswer('Одговор.');
 
-        $user = User::factory()->create();
-        actingAs($user);
-
-        postJson('/api/v1/chat', ['message' => 'Прашање?'])->assertCreated();
-
-        $metadata = $user->conversations()->first()->messages()->where('role', 'assistant')->first()->metadata;
+        $metadata = composeReply('Прашање?')->metadata;
 
         // The panel equals the configured window: everything read is shown.
         expect($metadata['top_chunks'])->toHaveCount(config('ai.retrieval_top_n'))
@@ -205,15 +223,10 @@ describe('GraphRAG reply composition', function (): void {
         // provenance bug, whichever way the two drift.
         config(['ai.retrieval_top_n' => 10]);
 
-        bindRetrievalClient(fn (): array => [...grpcRetrievalSuccess(), 'chunks' => rankedChunks($returned)]);
-        bindGenerationClient(fn (): array => grpcGenerationSuccess());
+        bindComposerRetrieval(fn (): array => [...composerRetrievalSuccess(), 'chunks' => composerRankedChunks($returned)]);
+        bindComposerAnswer('Одговор.');
 
-        $user = User::factory()->create();
-        actingAs($user);
-
-        postJson('/api/v1/chat', ['message' => 'Прашање?'])->assertCreated();
-
-        $metadata = $user->conversations()->first()->messages()->where('role', 'assistant')->first()->metadata;
+        $metadata = composeReply('Прашање?')->metadata;
 
         expect($metadata['top_chunks'])->toHaveCount($returned)
             ->and($metadata['chunk_count'])->toBe($returned);
@@ -224,54 +237,37 @@ describe('GraphRAG reply composition', function (): void {
         // provenance failure by another route.
         config(['ai.retrieval_top_n' => 0]);
 
-        bindRetrievalClient(fn (): array => [...grpcRetrievalSuccess(), 'chunks' => rankedChunks(10)]);
-        bindGenerationClient(fn (): array => grpcGenerationSuccess());
+        bindComposerRetrieval(fn (): array => [...composerRetrievalSuccess(), 'chunks' => composerRankedChunks(10)]);
+        bindComposerAnswer('Одговор.');
 
-        $user = User::factory()->create();
-        actingAs($user);
-
-        postJson('/api/v1/chat', ['message' => 'Прашање?'])->assertCreated();
-
-        $metadata = $user->conversations()->first()->messages()->where('role', 'assistant')->first()->metadata;
-
-        expect($metadata['top_chunks'])->toHaveCount(10);
+        expect(composeReply('Прашање?')->metadata['top_chunks'])->toHaveCount(10);
     });
 
     it('truncates long passage text in the citation trail', function (): void {
-        bindRetrievalClient(fn (): array => [
-            ...grpcRetrievalSuccess(),
+        bindComposerRetrieval(fn (): array => [
+            ...composerRetrievalSuccess(),
             'chunks' => [['id' => '1', 'text' => str_repeat('а', 2000), 'source' => 'ZAKON-A, чл. 1', 'score' => 1.0]],
         ]);
-        bindGenerationClient(fn (): array => grpcGenerationSuccess());
+        bindComposerAnswer('Одговор.');
 
-        $user = User::factory()->create();
-        actingAs($user);
-
-        postJson('/api/v1/chat', ['message' => 'Прашање?'])->assertCreated();
-
-        $metadata = $user->conversations()->first()->messages()->where('role', 'assistant')->first()->metadata;
+        $metadata = composeReply('Прашање?')->metadata;
 
         // The metadata is a citation trail, not a second copy of the corpus.
         expect(mb_strlen($metadata['top_chunks'][0]['text']))->toBeLessThan(2000);
     });
 
     it('handles a retrieval response that carries no chunks', function (): void {
-        // Older retrieval builds — and the HTTP driver's fakes — return only
-        // triples; the payload must still assemble.
-        bindRetrievalClient(fn (): array => [
+        // A retrieval build that returns only triples: the payload must still
+        // assemble rather than blowing up on a missing key.
+        bindComposerRetrieval(fn (): array => [
             'context' => 'некој контекст',
             'entities' => ['ZAKON-A, чл. 1'],
             'triples' => [],
             'latency_ms' => 5,
         ]);
-        bindGenerationClient(fn (): array => grpcGenerationSuccess());
+        bindComposerAnswer('Одговор.');
 
-        $user = User::factory()->create();
-        actingAs($user);
-
-        postJson('/api/v1/chat', ['message' => 'Прашање?'])->assertCreated();
-
-        $metadata = $user->conversations()->first()->messages()->where('role', 'assistant')->first()->metadata;
+        $metadata = composeReply('Прашање?')->metadata;
 
         expect($metadata['chunk_count'])->toBe(0)
             ->and($metadata['top_chunks'])->toBe([])
@@ -280,17 +276,15 @@ describe('GraphRAG reply composition', function (): void {
 
     it('forwards question, context and entity to the generation client', function (): void {
         $captured = [];
-        bindRetrievalClient(fn (): array => grpcRetrievalSuccess());
-        bindGenerationClient(function (string $question, string $context, ?string $entity, array $history) use (&$captured): array {
+        bindComposerRetrieval(fn (): array => composerRetrievalSuccess());
+        bindComposerGeneration(function (string $question, string $context, ?string $entity, array $history) use (&$captured): iterable {
             $captured = compact('question', 'context', 'entity', 'history');
 
-            return grpcGenerationSuccess();
+            yield ['text' => 'Одговор.', 'done' => false, 'tokens' => 0, 'model' => ''];
+            yield ['text' => '', 'done' => true, 'tokens' => 3, 'model' => 'gemini-flash-lite-latest'];
         });
 
-        $user = User::factory()->create();
-        actingAs($user);
-
-        postJson('/api/v1/chat', ['message' => 'Колку е работното време?'])->assertCreated();
+        composeReply();
 
         expect($captured['question'])->toBe('Колку е работното време?')
             ->and($captured['context'])->toBe("[ZAKON-A, чл. 1]\nРаботно време и распоред\n\n[ZAKON-A, чл. 3]\nПлата и надоместоци")
@@ -299,139 +293,102 @@ describe('GraphRAG reply composition', function (): void {
     });
 
     it('never sends conversation history to the generator (avoids answer copying)', function (): void {
+        // Each question is answered from its own retrieved context, so the model
+        // cannot copy a prior answer. The job passes a literal [] rather than
+        // trimming history, so this holds even mid-conversation.
         $captured = [];
-        bindRetrievalClient(fn (): array => grpcRetrievalSuccess());
-        bindGenerationClient(function (string $question, string $context, ?string $entity, array $history) use (&$captured): array {
-            $captured = compact('question', 'history');
+        bindComposerRetrieval(fn (): array => composerRetrievalSuccess());
+        bindComposerGeneration(function (string $question, string $context, ?string $entity, array $history) use (&$captured): iterable {
+            $captured[] = compact('question', 'history');
 
-            return grpcGenerationSuccess();
+            yield ['text' => 'Одговор.', 'done' => false, 'tokens' => 0, 'model' => ''];
+            yield ['text' => '', 'done' => true, 'tokens' => 3, 'model' => 'gemini-flash-lite-latest'];
         });
 
-        $user = User::factory()->create();
-        actingAs($user);
+        $conversation = Conversation::factory()->for(User::factory())->create();
+        $conversation->messages()->create(['role' => 'user', 'content' => 'Што е јавна набавка?']);
+        $conversation->messages()->create(['role' => 'assistant', 'content' => 'Претходен одговор.']);
 
-        $conversationId = postJson('/api/v1/chat', ['message' => 'Што е јавна набавка?'])
-            ->assertCreated()
-            ->json('conversation.id');
+        Redis::shouldReceive('rpush')->andReturn(1);
+        Redis::shouldReceive('expire')->andReturnTrue();
+        Redis::shouldReceive('exists')->andReturn(0);
+        Redis::shouldReceive('setex')->andReturnTrue();
 
-        postJson('/api/v1/chat', [
-            'message' => 'А кој ја спроведува?',
-            'conversation_id' => $conversationId,
-        ])->assertCreated();
+        (new StreamChatReply($conversation->id, 'stream-followup', 'А кој ја спроведува?', microtime(true)))->handle(
+            app(RetrievalClient::class),
+            app(GenerationClient::class),
+            app(AiLogger::class),
+            app(NonLegalInputGate::class),
+        );
 
-        // Even on a follow-up, history is empty: each question is answered from
-        // its own retrieved context, so the model can't copy prior answers.
-        expect($captured['question'])->toBe('А кој ја спроведува?')
-            ->and($captured['history'])->toBe([]);
+        expect($captured[0]['question'])->toBe('А кој ја спроведува?')
+            ->and($captured[0]['history'])->toBe([]);
     });
 
     it('still generates a reply when retrieval finds no context', function (): void {
         $captured = [];
-        bindRetrievalClient(fn (): array => [
+        bindComposerRetrieval(fn (): array => [
             'context' => '', 'entities' => [], 'triples' => [], 'chunks' => [], 'context_items' => 0, 'latency_ms' => 3,
         ]);
-        bindGenerationClient(function (string $question, string $context, ?string $entity, array $history) use (&$captured): array {
+        bindComposerGeneration(function (string $question, string $context, ?string $entity, array $history) use (&$captured): iterable {
             $captured = compact('context', 'entity');
 
-            return grpcGenerationSuccess();
+            yield ['text' => 'Одговор.', 'done' => false, 'tokens' => 0, 'model' => ''];
+            yield ['text' => '', 'done' => true, 'tokens' => 3, 'model' => 'gemini-flash-lite-latest'];
         });
 
-        $user = User::factory()->create();
-        actingAs($user);
-
-        postJson('/api/v1/chat', ['message' => 'Нешто што го нема во документите'])->assertCreated();
+        $metadata = composeReply('Нешто што го нема во документите')->metadata;
 
         expect($captured['context'])->toBe('')
             ->and($captured['entity'])->toBeNull();
 
-        $assistantMessage = $user->conversations()->first()->messages()->where('role', 'assistant')->first();
-
-        expect($assistantMessage->metadata['triple_count'])->toBe(0)
-            ->and($assistantMessage->metadata['entities'])->toBe([])
-            ->and($assistantMessage->metadata['top_triples'])->toBe([])
-            ->and($assistantMessage->metadata['top_chunks'])->toBe([]);
-    });
-
-    it('returns 503 and keeps the user message when retrieval fails', function (): void {
-        bindRetrievalClient(function (): array {
-            throw AiServiceException::connectionFailed('retrieval', new RuntimeException('gRPC UNAVAILABLE'));
-        });
-        // Both clients are constructor-injected, so both must resolve even
-        // though generation is never reached once retrieval throws.
-        bindGenerationClient(fn (): array => grpcGenerationSuccess());
-
-        $user = User::factory()->create();
-        actingAs($user);
-
-        postJson('/api/v1/chat', ['message' => 'Will this survive?'])
-            ->assertServiceUnavailable()
-            ->assertJsonPath('error.service', 'retrieval')
-            ->assertJsonPath('error.reason', 'connection');
-
-        $messages = $user->conversations()->first()->messages;
-
-        expect($messages)->toHaveCount(1)
-            ->and($messages->first()->role)->toBe('user')
-            ->and($messages->first()->content)->toBe('Will this survive?');
-    });
-
-    it('returns 503 when the generation service fails', function (): void {
-        bindRetrievalClient(fn (): array => grpcRetrievalSuccess());
-        bindGenerationClient(function (): array {
-            throw AiServiceException::invalidResponse('generation', 'gRPC status 13: model not loaded');
-        });
-
-        $user = User::factory()->create();
-        actingAs($user);
-
-        // A real legal question so the pipeline runs (the gate lets it through)
-        // and the generation failure surfaces — a greeting would be short-circuited.
-        postJson('/api/v1/chat', ['message' => 'Колку е работното време?'])
-            ->assertServiceUnavailable()
-            ->assertJsonPath('error.service', 'generation')
-            ->assertJsonPath('error.reason', 'invalid_response');
-
-        expect($user->conversations()->first()->messages)->toHaveCount(1);
-    });
-
-    it('suppresses the provisions panel when generation refuses (marker present)', function (): void {
-        // Retrieval DID return chunks — but the answer carries the refusal marker,
-        // so the panel must be blanked and the marker stripped from the text.
-        bindRetrievalClient(fn (): array => grpcRetrievalSuccess());
-        bindGenerationClient(fn (): array => [
-            'answer' => 'Оваа тема не е опфатена со достапните закони. [[NO_SOURCE]]',
-            'model' => 'gemini',
-            'tokens' => 5,
-            'latency_ms' => 10,
-        ]);
-
-        $user = User::factory()->create();
-        actingAs($user);
-
-        postJson('/api/v1/chat', ['message' => 'Колку години се служи воен рок?'])->assertCreated();
-
-        $metadata = $user->conversations()->first()->messages()->where('role', 'assistant')->first()->metadata;
-        $content = $user->conversations()->first()->messages()->where('role', 'assistant')->first()->content;
-
-        expect($metadata['refused'])->toBeTrue()
-            ->and($metadata['top_chunks'])->toBe([])
-            ->and($metadata['chunk_count'])->toBe(0)
-            ->and($metadata['top_triples'])->toBe([])
+        expect($metadata['triple_count'])->toBe(0)
             ->and($metadata['entities'])->toBe([])
-            ->and($content)->not->toContain('[[NO_SOURCE]]')
-            ->and($content)->toContain('не е опфатена');
+            ->and($metadata['top_triples'])->toBe([])
+            ->and($metadata['top_chunks'])->toBe([]);
+    });
+
+    it('refuses to compose a message from an empty answer', function (): void {
+        // A stream that terminates with nothing said is a generation failure, not
+        // an empty reply. Composing it would persist a blank assistant bubble and
+        // report success; instead it raises, and the job's pre-token branch lets
+        // the queue retry.
+        bindComposerRetrieval(fn (): array => composerRetrievalSuccess());
+        bindComposerGeneration(function (): iterable {
+            yield ['text' => '', 'done' => true, 'tokens' => 0, 'model' => 'gemini-flash-lite-latest'];
+        });
+
+        expect(fn () => composeReply())
+            ->toThrow(AiServiceException::class);
+
+        expect(Message::query()->where('role', 'assistant')->count())->toBe(0);
+    });
+});
+
+describe('refusal handling', function (): void {
+    it('suppresses the provisions panel when generation refuses (marker present)', function (): void {
+        // Retrieval DID return chunks — but the answer carries the refusal marker
+        // and a refusal-shaped opening, so the panel must be blanked and the
+        // marker stripped from the text.
+        bindComposerRetrieval(fn (): array => composerRetrievalSuccess());
+        bindComposerAnswer('Оваа тема не е опфатена со достапните закони. [[NO_SOURCE]]', 'gemini', 5);
+
+        $message = composeReply('Колку години се служи воен рок?');
+
+        expect($message->metadata['refused'])->toBeTrue()
+            ->and($message->metadata['top_chunks'])->toBe([])
+            ->and($message->metadata['chunk_count'])->toBe(0)
+            ->and($message->metadata['top_triples'])->toBe([])
+            ->and($message->metadata['entities'])->toBe([])
+            ->and($message->content)->not->toContain('[[NO_SOURCE]]')
+            ->and($message->content)->toContain('не е опфатена');
     });
 
     it('keeps the provisions panel for a normal answer (no marker)', function (): void {
-        bindRetrievalClient(fn (): array => grpcRetrievalSuccess());
-        bindGenerationClient(fn (): array => grpcGenerationSuccess());
+        bindComposerRetrieval(fn (): array => composerRetrievalSuccess());
+        bindComposerAnswer('Работното време е уредено во [ZAKON-A, чл. 1].');
 
-        $user = User::factory()->create();
-        actingAs($user);
-
-        postJson('/api/v1/chat', ['message' => 'Колку е работното време?'])->assertCreated();
-
-        $metadata = $user->conversations()->first()->messages()->where('role', 'assistant')->first()->metadata;
+        $metadata = composeReply()->metadata;
 
         expect($metadata['refused'])->toBeFalse()
             ->and($metadata['top_chunks'])->not->toBe([]);
@@ -441,20 +398,14 @@ describe('GraphRAG reply composition', function (): void {
         // The model sometimes appends the marker to a substantive negative answer.
         // Because the text is not refusal-shaped, the panel must survive — only the
         // stray marker is removed. This is the false positive that must never fire.
-        bindRetrievalClient(fn (): array => grpcRetrievalSuccess());
-        bindGenerationClient(fn (): array => [
-            'answer' => 'Вработен со средна стручна спрема не ги исполнува условите за лице за јавни набавки. [[NO_SOURCE]]',
-            'model' => 'gemini',
-            'tokens' => 5,
-            'latency_ms' => 10,
-        ]);
+        bindComposerRetrieval(fn (): array => composerRetrievalSuccess());
+        bindComposerAnswer(
+            'Вработен со средна стручна спрема не ги исполнува условите за лице за јавни набавки. [[NO_SOURCE]]',
+            'gemini',
+            5,
+        );
 
-        $user = User::factory()->create();
-        actingAs($user);
-
-        postJson('/api/v1/chat', ['message' => 'Дали вработен со средна стручна спрема може да биде лице за јавни набавки?'])->assertCreated();
-
-        $message = $user->conversations()->first()->messages()->where('role', 'assistant')->first();
+        $message = composeReply('Дали вработен со средна стручна спрема може да биде лице за јавни набавки?');
 
         expect($message->metadata['refused'])->toBeFalse()
             ->and($message->metadata['top_chunks'])->not->toBe([])
