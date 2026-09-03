@@ -41,12 +41,15 @@ return [
     | wired in docker-compose.yml) or the app will size the panel to its default
     | while the service returns something else.
     |
-    | RERANK_TOP_N is honoured as a deprecated alias, exactly as the retrieval
-    | service honours it, so an old setting cannot desynchronise the two.
+    | RERANK_TOP_N was honoured here as a deprecated alias. It is gone: the
+    | retrieval service stopped reading it when the cross-encoder was deleted, so
+    | honouring it on this side would have sized the panel from a variable the
+    | service ignores — the exact desynchronisation the alias existed to prevent.
+    | A stale RERANK_TOP_N in an old .env is now ignored by both processes.
     |
     */
 
-    'retrieval_top_n' => (int) (env('RETRIEVAL_TOP_N') ?: env('RERANK_TOP_N') ?: 10),
+    'retrieval_top_n' => (int) (env('RETRIEVAL_TOP_N') ?: 10),
 
     /*
     |--------------------------------------------------------------------------
@@ -115,36 +118,31 @@ return [
     | the first-chunk window the *only* thing a user experiences during the most
     | routine operational event: a deploy or restart mid-answer.
     |
-    |   - first-chunk: silence tolerated before the first token, derived from the
-    |     active driver because the pre-token gap differs ~20x. On the hosted
-    |     path it is retrieval (~4-10s) then a ~1-2s prefill, so 30s surfaces a
-    |     killed worker fast while clearing a warm request with room; the opt-in
-    |     local llama.cpp fallback adds ~90s of prefill, so it needs ~120s.
-    |     "first_chunk_timeout" pins one value for both drivers when set;
-    |     otherwise the relay derives it from ai.generator using the two
-    |     per-driver budgets. A cold first-inference retrieval that runs long can
-    |     raise the hosted budget or pin the override.
+    |   - "first_chunk_timeout": silence tolerated before the first token. The
+    |     pre-token gap is retrieval (~4-10s) then a ~1-2s prefill, so 30s
+    |     surfaces a killed worker fast while clearing a warm request with room.
+    |     This used to be derived from the active driver, because the local
+    |     llama.cpp path added ~90s of prefill and needed ~120s; with one backend
+    |     there is one budget and the relay reads this key directly. Raise it if a
+    |     cold first-inference retrieval runs long.
     |   - "between_chunk_timeout": silence tolerated once tokens flow. The median
     |     inter-token gap measured ~93ms, so 12s (~130x) clears any normal
     |     provider pause yet surfaces a mid-stream stall in seconds, not minutes.
-    |     Same for both drivers — once decoding starts, it streams.
+    |     Once decoding starts, it streams.
     |   - "poll_seconds": blpop block length — also the SSE keepalive cadence and
     |     the granularity at which the budgets above are re-checked.
     |
     */
 
     'stream' => [
-        // Null (env unset) = derive from the active driver via the two budgets
-        // below; set CHAT_STREAM_FIRST_CHUNK_TIMEOUT to pin one value for both.
-        'first_chunk_timeout' => env('CHAT_STREAM_FIRST_CHUNK_TIMEOUT'),
-        'first_chunk_timeout_hosted' => (int) env('CHAT_STREAM_FIRST_CHUNK_TIMEOUT_HOSTED', 30),
+        'first_chunk_timeout' => (int) env('CHAT_STREAM_FIRST_CHUNK_TIMEOUT', 30),
         'between_chunk_timeout' => (int) env('CHAT_STREAM_BETWEEN_CHUNK_TIMEOUT', 12),
         'poll_seconds' => (int) env('CHAT_STREAM_POLL_SECONDS', 5),
         // How long a stream's ownership key and its event list live in Redis.
         // Was the literal 300 at four call sites (ChatService, EscalationService,
         // and both jobs' publish()). It bounds how long after dispatch a browser
         // can still attach to a stream, so it must comfortably exceed the
-        // slowest job budget (~300s on the grpc fallback).
+        // slowest job budget (StreamChatReply::TIMEOUT_SECONDS).
         'key_ttl' => (int) env('CHAT_STREAM_KEY_TTL', 300),
     ],
 

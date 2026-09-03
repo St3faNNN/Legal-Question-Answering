@@ -44,14 +44,18 @@ class StreamChatReply implements ShouldQueue
     use ComposesGraphRagReply, Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
     /**
-     * Worst-case (grpc fallback) job budget, and the reference the queue's
-     * retry_after and the worker --timeout are sized against. It is the sum of
-     * the slowest per-call path — retrieval (AI_RETRIEVAL_TIMEOUT, ~45s) plus
-     * the local llama.cpp generation call (AI_TIMEOUT, ~240s) — plus margin. The
-     * *actual* per-job timeout is derived per driver in the constructor and is
-     * far smaller on the default hosted path (~90s); this constant is the
-     * ceiling that path never exceeds, so `retry_after > TIMEOUT_SECONDS` holds
-     * for either driver. Revisit if AI_TIMEOUT is raised above ~240.
+     * Ceiling on any job's timeout, and the reference the queue's retry_after,
+     * the worker --timeout and emittedTtl() are all sized against. The
+     * *effective* timeout is computed per job in the constructor from the live
+     * config (~90s as configured); this constant is the bound that computation
+     * must never exceed, so `retry_after > TIMEOUT_SECONDS` holds whatever the
+     * inner timeouts are tuned to.
+     *
+     * It was the measured worst case back when a local llama.cpp fallback
+     * existed. That path is gone, so 300 is now headroom rather than a measured
+     * sum — kept deliberately, because shrinking it would only tighten a
+     * backstop and drag retry_after down with it. Revisit if
+     * AI_RETRIEVAL_TIMEOUT or LLM_TIMEOUT is raised far above today's values.
      */
     public const TIMEOUT_SECONDS = 300;
 
@@ -94,18 +98,7 @@ class StreamChatReply implements ShouldQueue
          */
         public readonly float $receivedAt,
     ) {
-        // Size the job timeout to the ACTIVE generation path, not the slowest
-        // possible one. The hosted driver's whole-request cap (~30s) yields a
-        // ~90s job timeout — tight enough to surface a hang fast — while the
-        // opt-in local-llm gRPC fallback (llama.cpp prefill + decode, bounded by
-        // AI_TIMEOUT ~240s) needs ~300s and gets it automatically. A single
-        // static value cannot serve both: sized for the slow path, the default
-        // hosted deploy would wait ~40x the real request to notice a hang; sized
-        // for the fast path, the fallback would be killed mid-answer. Read from
-        // config at dispatch, so the value is captured into the queue payload
-        // the worker reads. See config/ai.php and the deadline stack in the
-        // worker command (docker-compose.yml).
-        // One generation backend now, so one deadline: retrieval's gRPC budget
+        // One generation backend, so one deadline: retrieval's gRPC budget
         // plus the hosted endpoint's whole-request cap, plus margin. This used to
         // branch on the driver because the local llama.cpp path needed ~300s of
         // CPU prefill; that path is gone.
@@ -138,6 +131,12 @@ class StreamChatReply implements ShouldQueue
         // like any reply — one chunk, persisted message, done — so the browser and
         // history are unaffected. Narrow by design (see NonLegalInputGate); a terse
         // real query still runs the full pipeline.
+        //
+        // GATE SITE 1 of 3. The gate is applied at every entry to an expensive
+        // path, never once centrally: here for the pipeline, and for the agent in
+        // EscalationService::escalate() (the endpoint) and RunAgentEscalation
+        // (the job). Any new path that reaches retrieval or a model must add its
+        // own check — there is no shared choke point that would do it for you.
         if ($gate->shouldGate($this->userMessage)) {
             $this->emitGatedReply($key, $gate, $logger);
 

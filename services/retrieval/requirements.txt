@@ -9,11 +9,10 @@ spacy==3.7.5
 click==8.1.8
 en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.7.1/en_core_web_sm-3.7.1-py3-none-any.whl
 numpy==1.26.4
-# Hybrid retrieval: BGE-M3 encodes the question (dense + lexical-sparse) and
-# bge-reranker-v2-m3 reranks the fused pool. Both are XLM-RoBERTa architectures
-# that plain transformers Auto classes load, so FlagEmbedding is not needed.
-# Installed from the CPU wheel index in the Dockerfile so the CUDA build is
-# never pulled.
+# Hybrid retrieval: BGE-M3 encodes the question (dense + lexical-sparse). It is
+# an XLM-RoBERTa architecture that plain transformers Auto classes load, so
+# FlagEmbedding is not needed. Installed from the CPU wheel index in the
+# Dockerfile so the CUDA build is never pulled.
 torch==2.2.2
 transformers==4.44.2
 tokenizers>=0.19,<0.20
@@ -22,10 +21,8 @@ huggingface_hub>=0.23.2,<1.0
 # loading weights — the difference between fitting on a small host and not.
 accelerate==0.33.0
 sentencepiece==0.1.99
-# ONNX Runtime backend for the reranker only (RERANK_BACKEND=onnx). Runs the
-# prebuilt int8 export onnx-community/bge-reranker-v2-m3-ONNX, which is markedly
-# faster than torch dynamic-int8 on an AVX2 CPU. The embedder is untouched
-# (BGE-M3 stays on torch). Imported lazily, so the default torch path never
-# requires it.
+# DEAD: this was the ONNX backend for the cross-encoder reranker, which has been
+# deleted. Nothing imports onnxruntime any more. Left in place pending approval to
+# remove it, since dropping a dependency changes what the image installs.
 onnxruntime==1.19.2
 pytest==8.3.4

@@ -12,9 +12,11 @@ use Grpc\ChannelCredentials;
 
 /**
  * gRPC-backed {@see RetrievalClient}. Wraps the generated protobuf stub and
- * translates transport failures into {@see AiServiceException}. Only
- * instantiated under the grpc driver (Docker), where the PHP grpc extension and
- * the generated stubs under App\Grpc\Pb are present.
+ * translates transport failures into {@see AiServiceException}. Instantiated
+ * wherever the app runs for real — in practice Docker, the only place the PHP
+ * grpc extension and the generated stubs under App\Grpc\Pb are present.
+ * Outside a container this binding is never resolved, because tests bind a fake
+ * {@see RetrievalClient} instead.
  */
 class GrpcRetrievalClient implements RetrievalClient
 {

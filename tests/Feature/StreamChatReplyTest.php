@@ -3,7 +3,6 @@
 use App\Exceptions\AiServiceException;
 use App\Grpc\GenerationClient;
 use App\Grpc\RetrievalClient;
-use App\Http\Controllers\Api\V1\ChatController;
 use App\Jobs\StreamChatReply;
 use App\Models\Conversation;
 use App\Models\User;
@@ -517,22 +516,6 @@ describe('GET /chat/stream/{id} relay', function (): void {
 
         expect($errors)->toHaveCount(1)
             ->and($errors[0]['reason'])->toBe('timeout');
-    });
-
-    it('uses the hosted first-chunk silence budget, with an explicit pin winning', function (): void {
-        config([
-            'ai.stream.first_chunk_timeout' => null,
-            'ai.stream.first_chunk_timeout_hosted' => 30,
-        ]);
-
-        $resolve = (new ReflectionMethod(ChatController::class, 'firstChunkTimeout'))
-            ->getClosure(app(ChatController::class));
-
-        // No driver to derive from any more — one backend, one budget.
-        expect($resolve())->toBe(30);
-
-        config(['ai.stream.first_chunk_timeout' => 45]);
-        expect($resolve())->toBe(45);
     });
 
     it('closes with a terminal error when tokens stall mid-stream', function (): void {

@@ -36,6 +36,7 @@ describe('the app boots with only the SECRET variables set', function (): void {
             'limits' => require config_path('limits.php'),
             'admin' => require config_path('admin.php'),
             'agent' => require config_path('agent.php'),
+            'ai' => require config_path('ai.php'),
         ]);
 
         expect(config('limits.rate.login'))->toBe(5)
@@ -54,7 +55,16 @@ describe('the app boots with only the SECRET variables set', function (): void {
             ->and(config('agent.connect_timeout'))->toBe(5)
             ->and(config('agent.budget.daily_units'))->toBe(60)
             ->and(config('agent.budget.pipeline_cost'))->toBe(1)
-            ->and(config('agent.budget.escalation_cost'))->toBe(4);
+            ->and(config('agent.budget.escalation_cost'))->toBe(4)
+            // The SSE relay's idle budgets. first_chunk_timeout used to be null
+            // by default and be derived from the active generation driver; with
+            // one backend it is a plain value the relay reads directly, so its
+            // default is now load-bearing rather than a fallback.
+            ->and(config('ai.stream.first_chunk_timeout'))->toBe(30)
+            ->and(config('ai.stream.between_chunk_timeout'))->toBe(12)
+            ->and(config('ai.stream.poll_seconds'))->toBe(5)
+            ->and(config('ai.stream.key_ttl'))->toBe(300)
+            ->and(config('ai.retrieval_top_n'))->toBe(10);
     });
 
     it('serves an authenticated request with the tunables at their defaults', function (): void {

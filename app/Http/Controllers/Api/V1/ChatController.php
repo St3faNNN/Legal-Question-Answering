@@ -155,7 +155,7 @@ class ChatController extends Controller
         // backstop — a clean job failure publishes its own terminal error via
         // StreamChatReply::failed(); these only fire when the worker died
         // without saying so (SIGKILL/OOM).
-        $firstChunkTimeout = (float) $this->firstChunkTimeout();
+        $firstChunkTimeout = (float) config('ai.stream.first_chunk_timeout');
         $betweenChunkTimeout = (float) config('ai.stream.between_chunk_timeout');
         $pollSeconds = max(1, (int) config('ai.stream.poll_seconds'));
 
@@ -216,26 +216,6 @@ class ChatController extends Controller
             'Connection' => 'keep-alive',
             'X-Accel-Buffering' => 'no',
         ]);
-    }
-
-    /**
-     * Silence budget before the first token, derived from the active generation
-     * driver unless pinned. The hosted path reaches the first token in seconds
-     * (retrieval + a short prefill); the opt-in local-llm fallback adds ~90s of
-     * llama.cpp prefill, so it needs a far larger window. Deriving keeps a
-     * routine restart or deploy from stranding a hosted client for the
-     * grpc-sized window — the failure a user actually hits, since neither a kill
-     * nor a stop fires the job's failed() hook.
-     */
-    private function firstChunkTimeout(): int
-    {
-        $override = config('ai.stream.first_chunk_timeout');
-
-        if ($override !== null) {
-            return (int) $override;
-        }
-
-        return (int) config('ai.stream.first_chunk_timeout_hosted');
     }
 
     /**

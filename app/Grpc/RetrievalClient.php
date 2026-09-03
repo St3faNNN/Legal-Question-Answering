@@ -4,10 +4,11 @@ namespace App\Grpc;
 
 /**
  * Transport-agnostic view of the Retrieval Service the reply generator depends
- * on. The concrete gRPC implementation ({@see GrpcRetrievalClient}) is only
- * bound when the grpc driver is active (Docker); tests bind a fake. This keeps
- * the generator and its tests independent of the PHP grpc extension and the
- * generated protobuf stubs.
+ * on. The concrete gRPC implementation ({@see GrpcRetrievalClient}) is bound
+ * whenever the app runs for real; tests bind a fake. That is the point of the
+ * interface: the PHP grpc extension and the generated protobuf stubs exist only
+ * inside the Docker image, so without this seam the reply path could not be
+ * tested outside a container at all.
  */
 interface RetrievalClient
 {

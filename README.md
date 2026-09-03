@@ -30,6 +30,23 @@ statutory cross-references parsed from the text** ("as defined in Article 96…"
 not LLM-extracted entity relationships. It is a citation graph, not a knowledge
 graph.
 
+The chat is the main surface but not the only one. The signed-in dashboard also
+carries two small features that are live and worth naming, since neither is a
+legal-QA feature:
+
+- **Todo lists** — per-user lists and items with due dates, soft-deleted, behind
+  the same Sanctum session and a `TodoListPolicy`. Ordinary CRUD; it exists
+  because the dashboard needed something the user owns and edits.
+- **A "newspaper" section** — the latest *konkursi* scraped from
+  [mon.gov.mk](https://mon.gov.mk/mk-MK/konkursi-i-stipendii/konkursi-mon) by the
+  `news:scrape` Artisan command, scheduled twice daily (08:00 and 12:00
+  Europe/Skopje) on the worker container. The scrape is an upsert keyed on URL,
+  so overlapping runs are harmless, and it parses the listing page's DOM — if MON
+  changes that page the command fails loudly rather than storing nothing
+  silently.
+
+Neither touches retrieval, the graph or a model.
+
 ---
 
 ## Architecture
@@ -259,8 +276,16 @@ recall of the returned list. The cross-encoder *does* order a short list better
 RRF top-16**; returning that top-16 directly matches it. Since the product shows a
 scannable list of provisions (not a single best answer), that reordering bought the
 user nothing, while costing ~30× latency and ~1 GiB of resident memory. So it came
-out. `torch` and `onnx` backends are kept behind a flag for the eval harness to
-switch back and compare.
+out — deleted, not left behind a flag, because a backend nobody switches on is a
+second implementation nobody tests. The numbers above came from the eval harness
+before the removal; reproducing them means checking out the commit before
+`Delete the cross-encoder`.
+
+One thing went with it. A cross-encoder emits an *absolute* relevance score; RRF
+does not — a fused score is a rank-reciprocal sum, so it says this passage beat
+that one, never that either is any good. There is therefore no retrieval-side
+signal for "nothing here is relevant" any more. Abstention is entirely the
+generation prompt's job.
 
 ### The result: a footprint that fits a 4 GB box
 

@@ -100,6 +100,11 @@ class RunAgentEscalation implements ShouldQueue
 
         // Defence in depth: the endpoint refuses non-legal input, but nothing
         // reaches the agent without passing the gate a second time here.
+        //
+        // GATE SITE 3 of 3 — see StreamChatReply::handle() (site 1, the pipeline)
+        // and EscalationService::escalate() (site 2, the endpoint). This one is
+        // not redundant: a job can be dispatched from anywhere, and this is the
+        // last check before a ~25k-token run is billed.
         if ($gate->shouldGate($this->question)) {
             $logger->warning('agent.escalation_gated', ['stream_id' => $this->streamId]);
             $this->publish($key, [

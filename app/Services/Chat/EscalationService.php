@@ -92,6 +92,11 @@ class EscalationService
         // pipeline: a greeting must never reach a 25k-token run. The gated reply
         // itself is already refused above, but a question can be re-checked here
         // for free, and the job checks a third time.
+        //
+        // GATE SITE 2 of 3 — see StreamChatReply::handle() (site 1, the pipeline)
+        // and RunAgentEscalation::handle() (site 3, the job). Checking here is
+        // what turns a gated escalation into a synchronous refusal instead of a
+        // queued run the browser waits on.
         if ($this->gate->shouldGate($question->content)) {
             throw new EscalationNotAvailableException('gated', 'Ова не е правно прашање.');
         }

@@ -3,9 +3,14 @@
 namespace App\Grpc;
 
 /**
- * Transport-agnostic view of the Generation Service the reply generator depends
- * on. The concrete gRPC implementation ({@see GrpcGenerationClient}) is only
- * bound when the grpc driver is active (Docker); tests bind a fake.
+ * Transport-agnostic view of the generation backend the reply generator depends
+ * on. There is one implementation — the hosted OpenAI-compatible client — and it
+ * is bound unconditionally; tests bind a fake. The interface stays because it is
+ * the seam those fakes attach to, and because it keeps the reply path from
+ * naming a provider.
+ *
+ * The gRPC implementation this used to point at was deleted with local
+ * generation. Only retrieval speaks gRPC now.
  */
 interface GenerationClient
 {
