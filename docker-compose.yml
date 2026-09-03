@@ -266,8 +266,27 @@ services:
     depends_on:
       laravel:
         condition: service_healthy
+    # busybox wget, NOT node -e "fetch(...)". This is not a style preference:
+    # 5060 and 5061 are SIP, and both sit on the WHATWG Fetch specification's
+    # blocked-ports list, which undici enforces. Node's fetch refuses the URL
+    # before opening a socket and rejects with the cause "bad port" — on every
+    # address form, every time. It is not intermittent; a probe that seemed to
+    # recover had in fact been replaced.
+    #
+    # Nothing else is affected. The server binds :::5060 dual-stack and answers
+    # a raw socket and wget on 127.0.0.1 with 200, and the app reaches it over
+    # cURL, which has no such list (verified: PHP Http::get on this URL returns
+    # 200 from the laravel container). The block is specific to fetch — so if a
+    # Node client for this service is ever written, move the port off 5060
+    # rather than working around it there.
+    #
+    # -q is quiet on success but still prints the reason on failure, which is
+    # what the old probe could not do: its .catch(() => process.exit(1))
+    # discarded the error, so every failed check logged an empty string.
+    # --spider also fails a non-2xx ("server returned error: HTTP/1.1 503 …"),
+    # so it keeps the r.ok check the fetch probe had.
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5060/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      test: [ "CMD", "wget", "-q", "--spider", "http://127.0.0.1:5060/health" ]
       interval: 15s
       timeout: 5s
       start_period: 10s

@@ -373,13 +373,31 @@ docker compose --profile agent up -d        # starts the agent service
 > There is no offline generation mode. `LLM_API_KEY` is required for the app to
 > answer anything, including in local development.
 
+**Updating a running stack**
+
+```bash
+docker compose up -d --force-recreate        # not `restart`
+```
+
+`restart` stops and starts the *existing* containers. It re-reads nothing: not a
+changed image, not a changed `docker-compose.yml`, and not the PHP the app has
+already resolved into `bootstrap/cache`. Twice during the `app/Grpc` → `app/Ai`
+rename a container kept serving pre-rename bindings after a `restart` and failed
+with `Target [App\Ai\RetrievalClient] is not instantiable` — five jobs into
+`failed_jobs` from what looked like a code bug and was a stale container. A
+migration failed to propagate earlier the same day for the same reason.
+
+Baked images and no bind mounts make that specific shape unlikely in production,
+but the rule is cheap and the failure is silent, so any deployment script should
+force-recreate rather than restart. When a container is replaced, check
+`failed_jobs` for casualties from the window before it was.
+
 **Tests**
 
 ```bash
 composer test                                            # Laravel: feature + unit (Pest)
 # Python services (torch CPU wheel + requirements, then pytest):
 cd services/retrieval && python -m pytest tests -q
-cd services/generation && python -m pytest tests -q
 ```
 
 **The two harnesses**
