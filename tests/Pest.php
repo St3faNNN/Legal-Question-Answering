@@ -1,6 +1,7 @@
 <?php
 
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Tests\Support\InertAiClients;
 use Tests\TestCase;
 
 /*
@@ -16,6 +17,13 @@ use Tests\TestCase;
 
 pest()->extend(TestCase::class)
     ->use(RefreshDatabase::class)
+    // Inert AI clients by default. Removing the placeholder generator means
+    // GeneratesReplies always builds the GraphRAG orchestrator, which
+    // constructor-injects the retrieval and generation clients — and the real
+    // retrieval client needs ext-grpc, absent outside the Docker image. These
+    // stand-ins throw if called, so a test that reaches the AI path without
+    // binding its own fake fails loudly instead of passing against a stub.
+    ->beforeEach(fn () => InertAiClients::bind())
     ->in('Feature');
 
 /*

@@ -105,11 +105,13 @@ class StreamChatReply implements ShouldQueue
         // config at dispatch, so the value is captured into the queue payload
         // the worker reads. See config/ai.php and the deadline stack in the
         // worker command (docker-compose.yml).
-        $generationDeadline = config('ai.generator') === 'grpc'
-            ? (int) config('ai.timeout')
-            : (int) config('ai.llm.timeout');
-
-        $this->timeout = (int) config('ai.retrieval_timeout') + $generationDeadline + self::TIMEOUT_MARGIN_SECONDS;
+        // One generation backend now, so one deadline: retrieval's gRPC budget
+        // plus the hosted endpoint's whole-request cap, plus margin. This used to
+        // branch on the driver because the local llama.cpp path needed ~300s of
+        // CPU prefill; that path is gone.
+        $this->timeout = (int) config('ai.retrieval_timeout')
+            + (int) config('ai.llm.timeout')
+            + self::TIMEOUT_MARGIN_SECONDS;
     }
 
     public function handle(RetrievalClient $retrieval, GenerationClient $generation, AiLogger $logger, NonLegalInputGate $gate): void

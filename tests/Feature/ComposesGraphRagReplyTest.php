@@ -11,7 +11,7 @@ use function Pest\Laravel\actingAs;
 use function Pest\Laravel\postJson;
 
 beforeEach(function (): void {
-    config(['ai.generator' => 'grpc', 'ai.timeout' => 5]);
+    config(['ai.llm.timeout' => 5]);
 });
 
 /**
@@ -96,7 +96,7 @@ describe('GraphRAG gRPC generator binding', function (): void {
     });
 });
 
-describe('GraphRAG gRPC chat flow', function (): void {
+describe('GraphRAG reply composition', function (): void {
     it('returns the generated reply and stores retrieval metadata', function (): void {
         bindRetrievalClient(fn (): array => grpcRetrievalSuccess());
         bindGenerationClient(fn (): array => grpcGenerationSuccess());

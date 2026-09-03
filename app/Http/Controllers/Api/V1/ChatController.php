@@ -106,6 +106,7 @@ class ChatController extends Controller
      *
      * @bodyParam conversation_id int required The conversation holding the answer. Example: 1
      * @bodyParam message_id int required The assistant message to escalate. Example: 4
+     * @bodyParam question_message_id int required The user message that answer responded to. Example: 3
      *
      * @response 202 {"conversation":{"id":1},"stream_id":"9b1c...","escalated_from":4,"cost_units":3,"remaining_units":54}
      */
@@ -117,6 +118,7 @@ class ChatController extends Controller
             $request->user(),
             $validated['conversation_id'],
             $validated['message_id'],
+            $validated['question_message_id'],
         );
 
         return response()->json([
@@ -233,9 +235,7 @@ class ChatController extends Controller
             return (int) $override;
         }
 
-        return config('ai.generator') === 'grpc'
-            ? (int) config('ai.stream.first_chunk_timeout_grpc')
-            : (int) config('ai.stream.first_chunk_timeout_hosted');
+        return (int) config('ai.stream.first_chunk_timeout_hosted');
     }
 
     /**

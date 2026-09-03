@@ -4,50 +4,16 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | Generator Driver
+    | Retrieval Deadline
     |--------------------------------------------------------------------------
     |
-    | This value determines which reply generator implementation is resolved
-    | from the container when the ChatService needs an answer. Supported drivers:
-    |
-    |   - "placeholder": a static canned response (no AI infrastructure needed).
-    |   - "http":  orchestrates the Retrieval and Generation microservices over
-    |              HTTP/JSON.
-    |   - "grpc":  the same orchestration over gRPC. Requires the PHP grpc
-    |              extension and generated stubs, so it runs inside Docker; local
-    |              Herd development stays on "placeholder"/"http".
-    |   - "openai_compatible": retrieval stays gRPC, but generation streams from a
-    |              hosted OpenAI-compatible /chat/completions endpoint (e.g.
-    |              Gemini's compatibility layer) instead of the local llama.cpp
-    |              service. See the "llm" block below.
-    |
-    | Swapping drivers never changes the ChatService or controllers.
+    | Bounds the gRPC retrieval call. Generation is a hosted HTTP endpoint and
+    | uses "llm.timeout" below; there is no second generation backend to size a
+    | deadline for. The local llama.cpp service (and the AI_GENERATOR /
+    | AI_TIMEOUT / AI_GENERATION_URL knobs that selected it) was removed — it was
+    | not viable on a t3.medium.
     |
     */
-
-    'generator' => env('AI_GENERATOR', 'placeholder'),
-
-    /*
-    |--------------------------------------------------------------------------
-    | Request Timeouts
-    |--------------------------------------------------------------------------
-    |
-    | Per-call deadlines. They are deliberately split by service because the two
-    | now live at very different speeds:
-    |
-    |   - "timeout" (AI_TIMEOUT) bounds the gRPC generation call. That path is
-    |     the opt-in local-llm fallback (llama.cpp on CPU: ~90s prefill plus
-    |     decode), so it stays generous. On the default hosted path generation
-    |     uses "llm.timeout" below instead, and this value is unused.
-    |   - "retrieval_timeout" (AI_RETRIEVAL_TIMEOUT) bounds the gRPC retrieval
-    |     call, which runs under both drivers. Retrieval is now ~4-10s warm (a
-    |     cold first-inference pass after boot is ~30s), so a 45s deadline clears
-    |     it with headroom while surfacing a genuine hang in under a minute — the
-    |     240s it inherited from "timeout" would have hidden a hang for four.
-    |
-    */
-
-    'timeout' => env('AI_TIMEOUT', 30),
 
     'retrieval_timeout' => (int) env('AI_RETRIEVAL_TIMEOUT', 45),
 
@@ -84,39 +50,49 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | Microservice Endpoints
+    | Retrieval Endpoint
     |--------------------------------------------------------------------------
     |
-    | Endpoints for the Retrieval and Generation microservices. The "http"
-    | driver expects base URLs (http://host:port); the "grpc" driver expects
-    | gRPC targets (host:port, no scheme). Unset when the placeholder driver is
-    | active.
+    | gRPC target for the Retrieval microservice (host:port, no scheme). There is
+    | no generation endpoint here any more: generation is a hosted HTTP endpoint
+    | configured under "llm" below.
     |
     */
 
     'endpoints' => [
+        // Retrieval only. NO DEFAULT: the hostname resolves only on the Compose
+        // network, so an absent value fails at resolve-time naming the variable
+        // rather than dialling a null host.
         'retrieval' => env('AI_RETRIEVAL_URL'),
-        'generation' => env('AI_GENERATION_URL'),
     ],
 
     /*
     |--------------------------------------------------------------------------
-    | OpenAI-Compatible LLM (openai_compatible driver)
+    | Hosted Generation (the only generation backend)
     |--------------------------------------------------------------------------
     |
-    | Used when AI_GENERATOR=openai_compatible: a hosted chat-completions
-    | endpoint replaces the local llama.cpp generation service (retrieval is
-    | untouched). The names are provider-neutral, so pointing at a different
-    | provider is an env change. The system prompt is shared with the generation
-    | service via a single file (prompts/legal_mk.txt) so both backends answer
-    | identically.
+    | The only generation backend: a hosted chat-completions endpoint. The local
+    | llama.cpp service it used to sit beside was removed (retrieval is untouched
+    | and still gRPC). The names are provider-neutral, so pointing at a different
+    | provider is an env change. The Macedonian system prompt lives in a single
+    | file (prompts/legal_mk.txt) that this driver loads.
     |
     */
 
     'llm' => [
         'base_url' => env('LLM_BASE_URL'),
-        'api_key' => env('LLM_API_KEY', ''),
-        'model' => env('LLM_MODEL', 'gemini-2.5-flash-lite'),
+        // SECRET — no default. Null when unset, and AppServiceProvider refuses
+        // to build the generation client rather than sending an empty bearer
+        // token and reporting the provider's 401 as if it were a service
+        // outage. A secret that falls back to a placeholder is worse than one
+        // that crashes.
+        'api_key' => env('LLM_API_KEY'),
+        // DEFAULT CHANGED (2026-09-01), deliberately: this read
+        // 'gemini-2.5-flash-lite' while docker-compose and every live .env set
+        // 'gemini-flash-lite-latest'. A fresh checkout without a .env therefore
+        // ran a different model from every real deployment. The default now
+        // matches what actually runs.
+        'model' => env('LLM_MODEL', 'gemini-flash-lite-latest'),
         'max_tokens' => (int) env('LLM_MAX_TOKENS', 1024),
         // Whole-request cap (cURL CURLOPT_TIMEOUT), streaming included. Hosted
         // generation is ~1-2s to first token and streams a full answer in well
@@ -162,9 +138,14 @@ return [
         // below; set CHAT_STREAM_FIRST_CHUNK_TIMEOUT to pin one value for both.
         'first_chunk_timeout' => env('CHAT_STREAM_FIRST_CHUNK_TIMEOUT'),
         'first_chunk_timeout_hosted' => (int) env('CHAT_STREAM_FIRST_CHUNK_TIMEOUT_HOSTED', 30),
-        'first_chunk_timeout_grpc' => (int) env('CHAT_STREAM_FIRST_CHUNK_TIMEOUT_GRPC', 120),
         'between_chunk_timeout' => (int) env('CHAT_STREAM_BETWEEN_CHUNK_TIMEOUT', 12),
         'poll_seconds' => (int) env('CHAT_STREAM_POLL_SECONDS', 5),
+        // How long a stream's ownership key and its event list live in Redis.
+        // Was the literal 300 at four call sites (ChatService, EscalationService,
+        // and both jobs' publish()). It bounds how long after dispatch a browser
+        // can still attach to a stream, so it must comfortably exceed the
+        // slowest job budget (~300s on the grpc fallback).
+        'key_ttl' => (int) env('CHAT_STREAM_KEY_TTL', 300),
     ],
 
 ];

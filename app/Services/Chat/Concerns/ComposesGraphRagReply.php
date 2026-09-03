@@ -89,7 +89,20 @@ trait ComposesGraphRagReply
 
         return [
             'answer' => $answer,
-            'model' => $generation['model'] ?? 'qwen2.5-1.5b-instruct',
+            // Null, not a model name. This used to fall back to
+            // 'qwen2.5-1.5b-instruct' — a model retired on 2026-08-08 and now
+            // impossible to run at all. Two callers hand this an explicit null
+            // (StreamChatReply converts an empty model string to null; the
+            // generator does the same for a missing field), so the fallback was
+            // reachable, and it would have stamped a retired local model onto a
+            // hosted answer. MetricsService::latencyByModel() groups by this
+            // column, so such a row would have joined the genuine historical
+            // bucket and been indistinguishable from it.
+            //
+            // Null is honest and, unlike a plausible name, it is countable: the
+            // dashboard's Latency section shows how many answers arrived without
+            // a model, so a driver that stops reporting one stays visible.
+            'model' => $generation['model'] ?? null,
             'tokens' => $generation['tokens'] ?? null,
             'latency_ms' => (int) ((hrtime(true) - $startNs) / 1_000_000),
             'metadata' => [

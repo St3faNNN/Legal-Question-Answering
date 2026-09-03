@@ -8,6 +8,7 @@ use App\Grpc\OpenAiStreamHandle;
 use App\Grpc\OpenAiStreamTransport;
 use App\Services\Logging\AiLogger;
 use Tests\Support\FakeOpenAiStreamTransport;
+use Tests\Support\InertAiClients;
 
 function openAiDriver(?OpenAiStreamTransport $transport = null): OpenAiCompatibleGenerationClient
 {
@@ -209,6 +210,9 @@ describe('OpenAiCompatibleGenerationClient', function (): void {
 
 describe('generation client binding', function (): void {
     it('resolves openai_compatible to the OpenAI-compatible client', function (): void {
+        // Drop the suite-wide stand-in: this asserts the real container binding.
+        InertAiClients::forgetGeneration();
+
         config([
             'ai.generator' => 'openai_compatible',
             'ai.llm.base_url' => 'https://llm.test/v1/',

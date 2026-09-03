@@ -2,7 +2,6 @@
 #
 # Generates gRPC stubs from the canonical contracts in proto/ into:
 #   - services/retrieval/app/pb/   (Python)
-#   - services/generation/app/pb/  (Python)
 #   - app/Grpc/Generated/          (PHP — requires protoc + grpc_php_plugin)
 #
 # The Python stubs are committed so the service Docker images need no codegen
@@ -61,7 +60,7 @@ if [ "${1:-}" == "--php" ]; then
         --php_out="$tmp" \
         --grpc_out="$tmp" \
         --plugin=protoc-gen-grpc="$plugin" \
-        "$PROTO_DIR/retrieval.proto" "$PROTO_DIR/generation.proto"
+        "$PROTO_DIR/retrieval.proto"
     mkdir -p "$ROOT_DIR/app/Grpc/Pb"
     cp -r "$tmp/App/Grpc/Pb/." "$ROOT_DIR/app/Grpc/Pb/"
     rm -rf "$tmp"
@@ -69,7 +68,6 @@ if [ "${1:-}" == "--php" ]; then
 else
     # Python-only (default): regenerate the committed service stubs.
     gen_python retrieval retrieval.proto
-    gen_python generation generation.proto
 fi
 
 echo "Done."

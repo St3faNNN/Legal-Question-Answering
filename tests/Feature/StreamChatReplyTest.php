@@ -349,34 +349,16 @@ describe('StreamChatReply job', function (): void {
             ->and($error['message'])->toBe('The assistant stopped unexpectedly. Please try again.');
     });
 
-    it('sizes the job timeout to the hosted generation deadline on the default driver', function (): void {
-        config([
-            'ai.generator' => 'openai_compatible',
-            'ai.retrieval_timeout' => 45,
-            'ai.llm.timeout' => 30,
-        ]);
+    it('sizes the job timeout to the one generation deadline there is', function (): void {
+        // This used to be two tests, one per driver. Local generation is gone, so
+        // there is a single sum: retrieval's gRPC budget plus the hosted
+        // endpoint's whole-request cap plus margin.
+        config(['ai.retrieval_timeout' => 45, 'ai.llm.timeout' => 30]);
 
-        $job = new StreamChatReply(1, 'stream-timeout-hosted', 'Прашање?', microtime(true));
+        $job = new StreamChatReply(1, 'stream-timeout', 'Прашање?', microtime(true));
 
-        // retrieval (45) + hosted whole-request cap (30) + margin (15): tight
-        // enough to surface a hang fast, above the legitimate per-request sum.
         expect($job->timeout)->toBe(90)
             ->and($job->timeout)->toBeLessThanOrEqual(StreamChatReply::TIMEOUT_SECONDS);
-    });
-
-    it('sizes the job timeout to the slower grpc fallback when that driver is active', function (): void {
-        config([
-            'ai.generator' => 'grpc',
-            'ai.retrieval_timeout' => 45,
-            'ai.timeout' => 240,
-        ]);
-
-        $job = new StreamChatReply(1, 'stream-timeout-grpc', 'Прашање?', microtime(true));
-
-        // retrieval (45) + llama.cpp call bound AI_TIMEOUT (240) + margin (15) —
-        // the worst case, and exactly the ceiling retry_after is sized above.
-        expect($job->timeout)->toBe(300)
-            ->and($job->timeout)->toBe(StreamChatReply::TIMEOUT_SECONDS);
     });
 
     it('is configured to retry with a short backoff', function (): void {
@@ -537,23 +519,18 @@ describe('GET /chat/stream/{id} relay', function (): void {
             ->and($errors[0]['reason'])->toBe('timeout');
     });
 
-    it('derives the first-chunk silence budget from the active generation driver', function (): void {
+    it('uses the hosted first-chunk silence budget, with an explicit pin winning', function (): void {
         config([
             'ai.stream.first_chunk_timeout' => null,
             'ai.stream.first_chunk_timeout_hosted' => 30,
-            'ai.stream.first_chunk_timeout_grpc' => 120,
         ]);
 
         $resolve = (new ReflectionMethod(ChatController::class, 'firstChunkTimeout'))
             ->getClosure(app(ChatController::class));
 
-        config(['ai.generator' => 'openai_compatible']);
+        // No driver to derive from any more — one backend, one budget.
         expect($resolve())->toBe(30);
 
-        config(['ai.generator' => 'grpc']);
-        expect($resolve())->toBe(120);
-
-        // An explicit pin wins over the per-driver derivation for both.
         config(['ai.stream.first_chunk_timeout' => 45]);
         expect($resolve())->toBe(45);
     });

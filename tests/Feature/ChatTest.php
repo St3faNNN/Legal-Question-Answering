@@ -1,5 +1,7 @@
 <?php
 
+use App\Grpc\GenerationClient;
+use App\Grpc\RetrievalClient;
 use App\Models\Conversation;
 use App\Models\Message;
 use App\Models\User;
@@ -8,6 +10,51 @@ use Illuminate\Support\Facades\Event;
 use function Pest\Laravel\actingAs;
 use function Pest\Laravel\getJson;
 use function Pest\Laravel\postJson;
+
+/**
+ * Script the AI layer for a test that actually sends a message.
+ *
+ * These used to run against the placeholder generator, which answered every
+ * question with "AI service not connected yet." and no model. That driver is
+ * gone: it was reachable in production by an unset AI_GENERATOR and wrote that
+ * string into `messages` as a real assistant answer, so the chat tests now do
+ * what every other AI test does and bind an explicit fake.
+ */
+function bindChatAi(): void
+{
+    app()->instance(RetrievalClient::class, new class implements RetrievalClient
+    {
+        public function retrieve(string $question): array
+        {
+            return [
+                'context' => "[ZAKON-A, чл. 1]\nОдредба",
+                'entities' => ['ZAKON-A, чл. 1'],
+                'triples' => [],
+                'chunks' => [['id' => '1', 'text' => 'Одредба', 'source' => 'ZAKON-A, чл. 1', 'score' => 1.0]],
+                'context_items' => 1,
+                'latency_ms' => 5,
+            ];
+        }
+
+        public function references(string $law, string $article): array
+        {
+            return ['found' => false, 'source_citation' => '', 'references' => []];
+        }
+    });
+
+    app()->instance(GenerationClient::class, new class implements GenerationClient
+    {
+        public function generate(string $question, string $context, ?string $entity, array $history): array
+        {
+            return ['answer' => 'Одговор од изворите.', 'model' => 'gemini-flash-lite-latest', 'tokens' => 12, 'latency_ms' => 20];
+        }
+
+        public function generateStream(string $question, string $context, ?string $entity, array $history): iterable
+        {
+            return [];
+        }
+    });
+}
 
 describe('chat', function (): void {
     it('rolls back the new conversation when persisting the user message fails', function (): void {
@@ -25,7 +72,9 @@ describe('chat', function (): void {
         expect($user->conversations()->count())->toBe(0);
     });
 
-    it('creates a conversation and returns a placeholder reply', function (): void {
+    it('creates a conversation and returns a generated reply', function (): void {
+        bindChatAi();
+
         $user = User::factory()->create();
         actingAs($user);
 
@@ -37,11 +86,27 @@ describe('chat', function (): void {
             ]);
 
         expect($response->json('message.role'))->toBe('assistant')
-            ->and($response->json('message.content'))->toBe('AI service not connected yet.')
-            ->and($response->json('message.model'))->toBeNull();
+            ->and($response->json('message.content'))->toBe('Одговор од изворите.')
+            // A real model name, not the placeholder's null.
+            ->and($response->json('message.model'))->toBe('gemini-flash-lite-latest');
+    });
+
+    it('has no placeholder path left that fabricates an answer', function (): void {
+        // The regression this guards: with the driver branch gone, a request that
+        // reaches generation without a working backend must FAIL, not invent a
+        // reply. The suite's inert clients throw, standing in for an outage.
+        $user = User::factory()->create();
+        actingAs($user);
+
+        postJson('/api/v1/chat', ['message' => 'Прашање?'])->assertStatus(500);
+
+        // Nothing was written as an assistant answer.
+        expect($user->conversations()->first()?->messages()->where('role', 'assistant')->count() ?? 0)->toBe(0);
     });
 
     it('persists the user message and assistant reply', function (): void {
+        bindChatAi();
+
         $user = User::factory()->create();
         actingAs($user);
 
@@ -53,10 +118,12 @@ describe('chat', function (): void {
             ->and($conversation->messages->first()->role)->toBe('user')
             ->and($conversation->messages->first()->content)->toBe('Tell me about GraphRAG.')
             ->and($conversation->messages->last()->role)->toBe('assistant')
-            ->and($conversation->messages->last()->content)->toBe('AI service not connected yet.');
+            ->and($conversation->messages->last()->content)->toBe('Одговор од изворите.');
     });
 
     it('continues an existing conversation', function (): void {
+        bindChatAi();
+
         $user = User::factory()->create();
         $conversation = Conversation::factory()->for($user)->create();
         Message::factory()->for($conversation)->create([
