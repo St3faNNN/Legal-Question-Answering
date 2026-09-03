@@ -55,9 +55,10 @@ flowchart LR
   vector matrix, and the citation graph in memory. Deployed on the same host as
   the app to save cost; splitting it onto its own box is an env change
   (`AI_RETRIEVAL_URL`), not a rewrite.
-- **Generation** — by default a **hosted OpenAI-compatible endpoint** (Gemini's
-  compatibility layer). An **opt-in local llama.cpp service** is kept as an
-  offline / rate-limited fallback behind a Compose profile.
+- **Generation** — a **hosted OpenAI-compatible endpoint** (Gemini's compatibility
+  layer). The only backend: there is no local generator and no offline mode, so
+  **a Gemini key is required even for local development**. Without `LLM_API_KEY`
+  the app refuses to build the generation client, naming the variable.
 
 ### The request lifecycle, and why it's shaped this way
 
@@ -220,9 +221,23 @@ service log — see [Verification](#verification-notes) for which is which.
 Local Qwen on CPU via llama.cpp is **prefill-bound at ~90s** (the context, not the
 answer length, dominates), and answered end-to-end in minutes. Moving generation
 to a hosted OpenAI-compatible endpoint took a full answer to **a few seconds**
-(≈180s → ≈6s end to end). The local service is retained behind a Compose profile
-for offline / rate-limited use. Swapping between them is a driver config change;
-the `ChatService` and controllers never move.
+(≈180s → ≈6s end to end).
+
+The local service was kept behind a Compose profile for a while, then **removed
+outright** — it is not viable on a t3.medium, and keeping it cost more than the
+option was worth. The driver-selection branch it needed had a default arm that
+bound a placeholder generator, and that arm was reachable by an unset or
+misspelled `AI_GENERATOR`: every question then returned the literal string
+*"AI service not connected yet."* as a successful assistant answer — HTTP 201, no
+exception, nothing in `failed_jobs`, and counted as produced by the operations
+dashboard. **A fabricated answer that looks real is worse than an outage**, so the
+branch went with the service. A provider outage now fails loudly: the job lands
+in `failed_jobs` and the browser gets a terminal error naming the service.
+
+Removing it reclaimed **~13.5 GB** — a 2.17 GB image, ~9.8 GB of cached weights
+(eight models: Qwen 0.5B/1.5B/3B-GGUF, BART-large, three FLAN-T5s, UnifiedQA), a
+1.4 GB dev virtualenv, and the 111 MB BART checkpoint. Retrieval's 4.75 GB of
+BGE-M3 and reranker weights share the same cache volume and were left in place.
 
 ### The cross-encoder reranker was removed
 
@@ -250,8 +265,9 @@ switch back and compare.
 ### The result: a footprint that fits a 4 GB box
 
 The whole stack now runs in **3.17 GiB** (`docker stats`, warm). Two moves got it
-there: making local generation opt-in removed a **~2 GiB** GGUF from the default
-deployment, and dropping the reranker freed **~1 GiB**. Warm retrieval is
+there: removing local generation took a **~2 GiB** GGUF out of the deployment
+entirely (the service is gone, not merely off by default), and dropping the
+reranker freed **~1 GiB**. Warm retrieval is
 **~0.1–0.3 s**; `rerank=0` on every query, and BGE-M3 encoding (~0.28 s cold on
 the first pass) is now the entire cost.
 
@@ -306,8 +322,10 @@ Requires Docker and (for the hosted generation path) a Gemini API key.
 ```bash
 bash scripts/fetch-artifacts.sh                          # verify graph + vector artifacts
 export APP_KEY="$(php artisan key:generate --show)"      # required by compose
-# Point at hosted generation (default, recommended):
-#   in your environment or .env:  AI_DRIVER=openai_compatible  LLM_API_KEY=<key>
+# Required in .env — compose refuses to start without the first, and the app
+# refuses to answer without the second:
+#   POSTGRES_PASSWORD=<choose one>
+#   LLM_API_KEY=<your Gemini key>
 docker compose up -d
 ```
 
@@ -320,12 +338,15 @@ docker compose exec laravel php artisan invitations:create --note "reviewer"
 
 Register in the SPA with that code, then log in.
 
-**Offline / fallback generation** (local llama.cpp instead of the hosted API):
+**Research agent** (the escalation path, opt-in):
 
 ```bash
-docker compose --profile local-llm up -d    # starts the generation service
-# and set AI_DRIVER=grpc
+docker compose --profile agent up -d        # starts the agent service
+# needs AGENT_SERVICE_TOKEN and AGENT_API_TOKEN in .env — see .env.example
 ```
+
+> There is no offline generation mode. `LLM_API_KEY` is required for the app to
+> answer anything, including in local development.
 
 **Tests**
 

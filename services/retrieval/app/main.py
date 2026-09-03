@@ -3,13 +3,16 @@
 Retrieval is hybrid over two artifacts built from the same corpus. The vector
 store (vectors.sqlite) supplies BGE-M3 dense and lexical-sparse rankings; the
 citation graph (graph.graphml) supplies the articles those hits cross-reference.
-The three rankings are fused with RRF; when a cross-encoder reranker is
-configured (RERANK_BACKEND=torch|onnx) the fused pool is reranked, otherwise
-(RERANK_BACKEND=none, the default) the RRF order stands. Either way the top
-slice is packed into the generator's context.
+The three rankings are fused with RRF, and the RRF order is the final order:
+the top slice is packed into the generator's context as it comes out of fusion.
 
-Everything expensive — both transformer models, the vector matrix, the graph —
-is loaded once at server startup, never per request.
+A cross-encoder reranker used to re-score the fused pool. It was measured and
+removed (see config.py, CANDIDATE_POOL): it reordered provisions already inside
+the RRF top-16 without changing which ones were returned, at ~30x the latency and
+~1 GiB of resident memory. The code path is gone, not merely switched off.
+
+Everything expensive — the embedder, the vector matrix, the graph — is loaded
+once at server startup, never per request.
 """
 
 import logging
@@ -35,12 +38,11 @@ from .pb import retrieval_pb2, retrieval_pb2_grpc
 from .vectors import ChunkHit, VectorStore
 
 if TYPE_CHECKING:  # pragma: no cover
-    # Imported for typing only: the embedder and reranker pull in torch, and the
-    # servicer, fusion, and wire contract are all testable against doubles
-    # without a deep-learning stack installed. build_context() imports them for
-    # real when the service actually starts.
+    # Imported for typing only: the embedder pulls in torch, and the servicer,
+    # fusion, and wire contract are all testable against doubles without a
+    # deep-learning stack installed. build_context() imports it for real when
+    # the service actually starts.
     from .embedder import QueryEmbedder
-    from .reranker import CrossEncoderReranker
 
 logger = logging.getLogger("retrieval")
 
@@ -64,13 +66,11 @@ class RetrievalContext:
         store: VectorStore,
         graph,
         embedder: "QueryEmbedder",
-        reranker: "CrossEncoderReranker | None",
     ):
         self.settings = settings
         self.store = store
         self.graph = graph
         self.embedder = embedder
-        self.reranker = reranker
 
     def retrieve(self, question: str) -> dict:
         start = time.perf_counter()
@@ -108,9 +108,9 @@ class RetrievalContext:
         )
         stage["fusion"] = round(fusion_ms + (time.perf_counter() - _t) * 1000)
 
-        _t = time.perf_counter()
-        top = self._rerank(question, pool)
-        stage["rerank"] = round((time.perf_counter() - _t) * 1000)
+        # The RRF pool IS the ranking. Nothing re-scores it; the window is a
+        # slice, so it costs no model call and no measurable time.
+        top = pool[: self.settings.retrieval_top_n]
 
         _t = time.perf_counter()
         context, context_items = pack_context(top, self.settings.context_char_budget)
@@ -123,12 +123,11 @@ class RetrievalContext:
         # Per-stage breakdown for latency diagnosis, in the module's %-style. This
         # is instrumentation only — no retrieval logic is changed.
         logger.info(
-            "retrieve stage_ms embed=%d search=%d fusion=%d graph=%d rerank=%d pack=%d total=%d",
+            "retrieve stage_ms embed=%d search=%d fusion=%d graph=%d pack=%d total=%d",
             stage["embed"],
             stage["search"],
             stage["fusion"],
             stage["graph"],
-            stage["rerank"],
             stage["pack"],
             latency_ms,
         )
@@ -136,7 +135,7 @@ class RetrievalContext:
         return {
             "context": context,
             "context_items": context_items,
-            # The citations of the reranked articles. Kept under the wire's
+            # The citations of the returned articles. Kept under the wire's
             # existing "entities" field: same role, corpus-appropriate content.
             "entities": _unique([candidate.citation for candidate in top if candidate.citation]),
             "triples": reference_triples(self.graph, unit_keys, self.settings.retrieval_top_n),
@@ -145,7 +144,7 @@ class RetrievalContext:
                     "id": str(candidate.chunk_id),
                     "text": candidate.text,
                     "source": candidate.citation or citation_of(self.graph, candidate.unit_key),
-                    "score": float(candidate.rerank_score or candidate.fused_score),
+                    "score": float(candidate.fused_score),
                 }
                 for candidate in top
             ],
@@ -181,24 +180,6 @@ class RetrievalContext:
         )
         hits = self.store.chunks_for_units([item.unit_key for item in expansions])
         return _candidates(hits)
-
-    def _rerank(self, question: str, pool: list[Candidate]) -> list[Candidate]:
-        if not pool:
-            return []
-
-        # No cross-encoder configured (RERANK_BACKEND=none): the pool is already
-        # in RRF-fused order, so take the top slice as-is. rerank_score stays
-        # None, and the fused score is what surfaces on the wire.
-        if self.reranker is None:
-            return pool[: self.settings.retrieval_top_n]
-
-        scores = self.reranker.score(question, [candidate.text for candidate in pool])
-        for candidate, score in zip(pool, scores):
-            candidate.rerank_score = float(score)
-
-        ranked = sorted(pool, key=lambda c: -(c.rerank_score if c.rerank_score is not None else 0.0))
-        return ranked[: self.settings.retrieval_top_n]
-
 
 def _candidates(hits: list[ChunkHit]) -> list[Candidate]:
     return [
@@ -241,44 +222,6 @@ def _check_config(settings: Settings) -> None:
             settings.candidate_pool,
             settings.candidate_pool,
         )
-
-
-def _build_reranker(settings: Settings):
-    """Constructs the reranker for the configured backend, or returns None when
-    reranking is disabled.
-
-    For ``RERANK_BACKEND=none`` (the default) nothing is imported from
-    :mod:`.reranker`, so no cross-encoder is fetched, loaded, or held in memory;
-    ordering falls through to the RRF-fused pool. ``torch`` and ``onnx`` build
-    their respective backends (the caller loads them). An unknown value fails
-    loudly rather than silently degrading.
-    """
-    backend = settings.rerank_backend
-    if backend == "none":
-        logger.info("Reranker disabled (RERANK_BACKEND=none); ordering by RRF fusion")
-        return None
-    if backend == "torch":
-        from .reranker import CrossEncoderReranker
-
-        return CrossEncoderReranker(
-            settings.reranker_model_path,
-            settings.device,
-            max_length=settings.rerank_max_length,
-            dtype=settings.dtype,
-            quantize=settings.quantize,
-        )
-    if backend == "onnx":
-        from .reranker import OnnxCrossEncoderReranker
-
-        return OnnxCrossEncoderReranker(
-            settings.reranker_model_path,
-            settings.rerank_onnx_repo,
-            settings.rerank_onnx_file,
-            max_length=settings.rerank_max_length,
-        )
-    raise ValueError(
-        f"Unknown RERANK_BACKEND: {backend!r} (expected 'none', 'torch', or 'onnx')"
-    )
 
 
 def build_context(settings: Settings) -> RetrievalContext:
@@ -325,13 +268,7 @@ def build_context(settings: Settings) -> RetrievalContext:
             settings.embed_model_path,
         )
 
-    # Reranker backend selection. none (default) loads nothing and lets the RRF
-    # order stand; torch/onnx build and load a cross-encoder. See _build_reranker.
-    reranker = _build_reranker(settings)
-    if reranker is not None:
-        reranker.load()
-
-    return RetrievalContext(settings, store, graph, embedder, reranker)
+    return RetrievalContext(settings, store, graph, embedder)
 
 
 class RetrievalServicer(retrieval_pb2_grpc.RetrievalServicer):

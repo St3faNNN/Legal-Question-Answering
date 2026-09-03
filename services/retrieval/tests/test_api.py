@@ -13,15 +13,15 @@ from app.config import get_settings
 from app.main import RetrievalContext, build_server
 from app.pb import retrieval_pb2, retrieval_pb2_grpc
 from app.vectors import VectorStore
-from tests.conftest import FakeEmbedder, FakeReranker
+from tests.conftest import FakeEmbedder
 
 
 @pytest.fixture()
 def make_context(vector_db_path, citation_graphml_path, monkeypatch):
     """Builds a RetrievalContext over the fixture corpus with injectable
-    embedder/reranker doubles."""
+    embedder double."""
 
-    def _build(embedder=None, reranker=None, **env) -> RetrievalContext:
+    def _build(embedder=None, **env) -> RetrievalContext:
         monkeypatch.setenv("GRAPH_PATH", citation_graphml_path)
         monkeypatch.setenv("VECTOR_DB_PATH", vector_db_path)
         for key, value in env.items():
@@ -34,7 +34,6 @@ def make_context(vector_db_path, citation_graphml_path, monkeypatch):
             store,
             load_citation_graph(citation_graphml_path),
             embedder or FakeEmbedder(),
-            reranker or FakeReranker(),
         )
 
     return _build
@@ -81,7 +80,7 @@ def test_retrieve_reports_citations_as_entities(channel):
     assert "ZAKON-A, чл. 1" in list(response.entities)
 
 
-def test_retrieve_packs_the_reranked_passages_into_the_context(channel):
+def test_retrieve_packs_the_returned_passages_into_the_context(channel):
     stub = retrieval_pb2_grpc.RetrievalStub(channel)
     response = stub.Retrieve(retrieval_pb2.RetrieveRequest(question="Работно време?"))
 
@@ -172,15 +171,6 @@ def test_sparse_arm_contributes_when_the_embedder_returns_weights(make_context):
     assert "ZAKON-B, чл. 1" in sources
 
 
-def test_reranker_decides_the_final_order(make_context):
-    context = make_context(reranker=FakeReranker(prefer=["Плата", "Работно време"]))
-
-    result = context.retrieve("Плата?")
-
-    assert result["chunks"][0]["source"] == "ZAKON-A, чл. 3"
-    assert result["chunks"][1]["source"] == "ZAKON-A, чл. 1"
-
-
 def test_retrieval_top_n_caps_what_reaches_the_generator(make_context):
     context = make_context(RETRIEVAL_TOP_N=2)
 
@@ -190,7 +180,7 @@ def test_retrieval_top_n_caps_what_reaches_the_generator(make_context):
 
 
 def test_context_items_reports_what_survived_the_budget(make_context):
-    """The reranked set and the set the generator actually sees can differ; the
+    """The returned set and the set the generator actually sees can differ; the
     gap must be visible rather than silently absorbed."""
     context = make_context(CONTEXT_CHAR_BUDGET=40)
 
@@ -199,22 +189,16 @@ def test_context_items_reports_what_survived_the_budget(make_context):
     assert len(result["chunks"]) > result["context_items"] >= 1
 
 
-def test_reranker_sees_the_whole_fused_pool(make_context):
-    reranker = FakeReranker()
-    context = make_context(reranker=reranker)
-
-    context.retrieve("Работно време?")
-
-    _question, pool_size = reranker.scored[0]
-    assert pool_size > 0
-
-
 def test_retrieve_returns_a_score_per_chunk(make_context):
-    context = make_context(reranker=FakeReranker(prefer=["Плата"]))
+    # The score used to be the FakeReranker's synthetic 100.0. With the
+    # cross-encoder gone the only score is the RRF fused score, so the invariant
+    # is that every chunk carries a positive one — not a particular magnitude.
+    context = make_context()
 
     result = context.retrieve("Плата?")
 
-    assert result["chunks"][0]["score"] == 100.0
+    assert result["chunks"]
+    assert all(chunk["score"] > 0 for chunk in result["chunks"])
 
 
 def test_empty_vector_matches_still_produce_a_valid_response(make_context):
@@ -232,13 +216,12 @@ def test_empty_vector_matches_still_produce_a_valid_response(make_context):
 
 
 def test_question_is_forwarded_to_both_models(make_context):
-    embedder, reranker = FakeEmbedder(), FakeReranker()
-    context = make_context(embedder=embedder, reranker=reranker)
+    embedder = FakeEmbedder()
+    context = make_context(embedder=embedder)
 
     context.retrieve("Колку трае годишниот одмор?")
 
     assert embedder.encoded == ["Колку трае годишниот одмор?"]
-    assert reranker.scored[0][0] == "Колку трае годишниот одмор?"
 
 
 def test_dense_only_when_the_sparse_head_is_unavailable(make_context):

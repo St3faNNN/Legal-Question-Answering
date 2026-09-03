@@ -1,15 +1,14 @@
 # Full-stack demo: Laravel + PostgreSQL + Redis + a queue worker + the GraphRAG
-# retrieval microservice. Generation runs one of two ways:
-#   - default (hosted API): the OpenAI-compatible driver streams from a hosted
-#     endpoint. Set AI_DRIVER=openai_compatible + LLM_API_KEY. No local
-#     generation container is started, built, or pulled.
-#   - offline fallback: `docker compose --profile local-llm up -d` starts the
-#     local llama.cpp generation service; pair it with AI_DRIVER=grpc.
+# retrieval microservice. Generation is a HOSTED OpenAI-compatible endpoint
+# (Gemini by default) — there is no local generation service and no offline
+# fallback. Running a 3B model beside retrieval was not viable on a t3.medium,
+# so LLM_API_KEY is required for the app to answer anything at all.
 #
 # Before first run:
 #   1. bash scripts/fetch-artifacts.sh        (verifies graph + vector artifacts)
 #   2. export APP_KEY="$(php artisan key:generate --show)"
-#   3. docker compose up -d                   (add --profile local-llm for offline)
+#   3. set LLM_API_KEY and POSTGRES_PASSWORD in .env
+#   4. docker compose up -d                   (add --profile agent for escalation)
 
 # Shared environment for the laravel (web) and worker (queue) containers — they
 # run the same image and must agree on DB, Redis, and the AI service targets.
@@ -24,9 +23,16 @@ x-laravel-env: &laravel-env
   DB_CONNECTION: pgsql
   DB_HOST: postgres
   DB_PORT: "5432"
-  DB_DATABASE: graphrag_app
-  DB_USERNAME: graphrag
-  DB_PASSWORD: secret
+  # Names, not credentials: the committed fallbacks keep `docker compose up`
+  # working out of the box and match the postgres service below. Both sides read
+  # the SAME variables, so overriding one cannot desynchronise them.
+  DB_DATABASE: ${POSTGRES_DB:-graphrag_app}
+  DB_USERNAME: ${POSTGRES_USER:-graphrag}
+  # No committed fallback, deliberately. This file is in git, so a default here
+  # is a published password — and one that every deployment silently inherits.
+  # Compose refuses to start until POSTGRES_PASSWORD is set, the same treatment
+  # APP_KEY already gets above.
+  DB_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required — set it in .env (see .env.example)}
   SESSION_DRIVER: database
   CACHE_STORE: database
   QUEUE_CONNECTION: database
@@ -44,35 +50,12 @@ x-laravel-env: &laravel-env
   REDIS_CLIENT: predis
   REDIS_HOST: redis
   REDIS_PORT: "6379"
-  # Which generation backend the app uses. The override knob is AI_DRIVER (not
-  # AI_GENERATOR) on purpose: AI_GENERATOR lives in .env as "placeholder" for
-  # local Herd, and reusing that name here would let it shadow this value.
-  #
-  # NOTE: this still defaults to "grpc", but the local generation service is now
-  # opt-in (profile "local-llm"), so a bare `docker compose up` must have
-  # AI_DRIVER set to match what is actually running:
-  #   - hosted API (default deploy): AI_DRIVER=openai_compatible + LLM_API_KEY,
-  #     and generation is neither started nor needed.
-  #   - offline fallback: `docker compose --profile local-llm up` AND AI_DRIVER=grpc.
-  # Left as grpc rather than flipped to openai_compatible so the offline path is
-  # not silently repointed; set AI_DRIVER (e.g. in .env) for the hosted path.
-  AI_GENERATOR: ${AI_DRIVER:-grpc}
-  # Per-call deadlines, split by service because they now live at very different
-  # speeds:
-  #   - AI_TIMEOUT bounds the gRPC GENERATION call, which is the opt-in local-llm
-  #     fallback only (llama.cpp on CPU: ~90s prefill + decode). Kept generous
-  #     and hardcoded so a stray .env AI_TIMEOUT cannot shadow it down and cut
-  #     that path off mid-answer. On the default hosted path generation uses
-  #     LLM_TIMEOUT below and this value is unused.
-  #   - AI_RETRIEVAL_TIMEOUT bounds the gRPC RETRIEVAL call (both drivers).
-  #     Retrieval is ~4-10s warm (~30s on the first cold inference after boot),
-  #     so 45s clears it with headroom yet surfaces a hang in under a minute.
-  # These per-call deadlines are the innermost timers: whichever fires first
-  # throws a clean AiServiceException. The job timeout (StreamChatReply, derived
-  # per driver) sits above them — ~90s hosted (45 + LLM_TIMEOUT 30 + margin),
-  # ~300s grpc (45 + AI_TIMEOUT 240 + margin). See the worker command for the
-  # full ordering against --timeout and retry_after.
-  AI_TIMEOUT: "240"
+  # Per-call deadline for the gRPC RETRIEVAL call. Retrieval is ~4-10s warm
+  # (~30s on the first cold inference after boot), so 45s clears it with headroom
+  # yet surfaces a hang in under a minute. Generation's deadline is LLM_TIMEOUT.
+  # These are the innermost timers: whichever fires first throws a clean
+  # AiServiceException. The job timeout (StreamChatReply) sits above them at
+  # 45 + LLM_TIMEOUT 30 + margin = 90s.
   AI_RETRIEVAL_TIMEOUT: ${AI_RETRIEVAL_TIMEOUT:-45}
   # The SAME variable the retrieval service reads (see that service below). The
   # app needs it because the provisions panel is sized from it — the panel shows
@@ -82,11 +65,11 @@ x-laravel-env: &laravel-env
   # equality is asserted in tests, but only against the app's own config, so this
   # wiring is the part that has to be right by hand.
   RETRIEVAL_TOP_N: ${RETRIEVAL_TOP_N:-10}
-  # gRPC targets (host:port, no scheme) — the services speak gRPC/HTTP2.
+  # gRPC target for RETRIEVAL (host:port, no scheme). Generation is HTTP.
   AI_RETRIEVAL_URL: retrieval:8001
-  AI_GENERATION_URL: generation:8002
-  # OpenAI-compatible generation driver — only consulted when AI_GENERATOR is
-  # openai_compatible. Provider-neutral; defaults target Gemini's compat layer.
+  # Hosted generation — the ONLY generation backend. Provider-neutral; the
+  # defaults target Gemini's OpenAI compatibility layer. LLM_API_KEY has no
+  # fallback: without it the app refuses to build the client, naming it.
   # The shared Macedonian prompt is mounted at /var/www/html/prompts (x-app-source),
   # so config('ai.llm.prompt_path') resolves via base_path() with no override.
   LLM_BASE_URL: ${LLM_BASE_URL:-https://generativelanguage.googleapis.com/v1beta/openai/}
@@ -109,6 +92,10 @@ x-laravel-env: &laravel-env
   # One daily meter for both answer paths, in units: a pipeline answer costs 1,
   # an agent escalation 4 (measured at a mean 4.3x the tokens). 0 disables it.
   GENERATION_DAILY_UNITS: ${GENERATION_DAILY_UNITS:-60}
+  # Operational dashboard allowlist (config/admin.php). Comma-separated emails;
+  # unset means nobody is an admin and every /api/v1/admin route 404s, so a typo
+  # locks the panel rather than opening it.
+  ADMIN_EMAILS: ${ADMIN_EMAILS:-}
 
 # The app source, mounted into the laravel and worker containers so a PHP or
 # built-asset change takes effect on restart rather than requiring a full image
@@ -128,8 +115,8 @@ x-app-source: &app-source
   - ./database:/var/www/html/database:ro
   - ./resources:/var/www/html/resources:ro
   - ./public/build:/var/www/html/public/build:ro
-  # Shared Macedonian legal system prompt (also mounted into the generation
-  # service). Mounted rather than baked so an edit is a restart, not a rebuild.
+  # Shared Macedonian legal system prompt. Mounted rather than baked so an
+  # edit is a restart, not a rebuild.
   - ./prompts:/var/www/html/prompts:ro
 
 services:
@@ -137,9 +124,12 @@ services:
     image: postgres:17
     restart: unless-stopped
     environment:
-      POSTGRES_DB: graphrag_app
-      POSTGRES_USER: graphrag
-      POSTGRES_PASSWORD: secret
+      # Read by the postgres image ONLY on first initialisation of the pgdata
+      # volume. Changing POSTGRES_PASSWORD later does not alter the existing
+      # role — see the rotation note in .env.example.
+      POSTGRES_DB: ${POSTGRES_DB:-graphrag_app}
+      POSTGRES_USER: ${POSTGRES_USER:-graphrag}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required — set it in .env (see .env.example)}
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -164,45 +154,27 @@ services:
       GRAPH_PATH: /data/graph.graphml
       VECTOR_DB_PATH: /vectors/vectors.sqlite
       EMBED_MODEL_PATH: ${EMBED_MODEL_PATH:-BAAI/bge-m3}
-      RERANKER_MODEL_PATH: ${RERANKER_MODEL_PATH:-BAAI/bge-reranker-v2-m3}
-      # Retrieval tuning. The cross-encoder reranker was removed (see config.py
-      # RERANK_BACKEND for the decision + measured trade), so there is no
-      # per-candidate scoring cost and these are nearly free to widen.
-      # RETRIEVAL_TOP_N passages are returned from a fused pool of CANDIDATE_POOL;
-      # keep CANDIDATE_POOL >= RETRIEVAL_TOP_N or the pool caps the result (the
-      # service warns at startup if it doesn't).
-      #
-      # RETRIEVAL_TOP_N was formerly RERANK_TOP_N; the old name stays a deprecated
-      # alias (honoured with a warning). Both are passed through so an existing
-      # .env setting either one keeps working — config.py resolves them (default
-      # 10). Must be <= CANDIDATE_POOL.
+      # Retrieval tuning. RRF is the only ordering — the cross-encoder reranker
+      # was measured, removed, and its code path deleted — so widening the pool
+      # costs one more fusion term per candidate and no model call.
+      # RETRIEVAL_TOP_N passages come from a fused pool of CANDIDATE_POOL; keep
+      # CANDIDATE_POOL >= RETRIEVAL_TOP_N or the pool caps the result (the
+      # service warns at startup if it does not).
+      CANDIDATE_POOL: ${CANDIDATE_POOL:-24}
       RETRIEVAL_TOP_N: ${RETRIEVAL_TOP_N:-}
-      RERANK_TOP_N: ${RERANK_TOP_N:-}
       CONTEXT_CHAR_BUDGET: ${CONTEXT_CHAR_BUDGET:-12000}
       # float32, deliberately: PyTorch has no fast CPU path for bfloat16 without
       # AMX, and emulating it took a single query from seconds to over ten
       # minutes. Only set bfloat16 on a GPU or an AMX-capable CPU.
       MODEL_DTYPE: ${RETRIEVAL_MODEL_DTYPE:-float32}
-      # int8-quantize the embedder's Linear layers. The RAM saving is marginal —
-      # retrieval measured 5.14 GiB *with* int8, not the ~2 GB once claimed here.
-      # What int8 actually did was roughly halve the (now-removed) cross-encoder's
-      # forward pass on this AVX2-only CPU: a latency win, not the native int8
-      # GEMM it was described as (this CPU has AVX2 but no VNNI). With the reranker
-      # gone int8 only touches the embedder; kept for now. QUANTIZE=none serves the
-      # embedder at full precision.
+      # int8-quantize the embedder Linear layers — the only model left. The RAM
+      # saving is marginal (retrieval measured 5.14 GiB *with* int8), and the
+      # latency win it was kept for was the cross-encoder forward pass, which
+      # no longer exists. This CPU is AVX2-only with no VNNI, so there is no
+      # native int8 GEMM to hit. Kept for continuity with the captured eval
+      # runs rather than for a measured benefit; QUANTIZE=none is a safe
+      # alternative.
       QUANTIZE: ${RETRIEVAL_QUANTIZE:-int8}
-      # Reranker execution backend: none (default) disables the cross-encoder
-      # entirely — nothing is loaded, ordering falls through to the RRF pool.
-      # torch/onnx are retained only for the eval harness to switch back and
-      # compare (they reload the ~568M cross-encoder, formerly ~30-70s per query):
-      #   RERANK_BACKEND=torch docker compose up -d retrieval
-      RERANK_BACKEND: ${RERANK_BACKEND:-none}
-      RERANK_ONNX_REPO: ${RERANK_ONNX_REPO:-onnx-community/bge-reranker-v2-m3-ONNX}
-      RERANK_ONNX_FILE: ${RERANK_ONNX_FILE:-onnx/model_int8.onnx}
-      CANDIDATE_POOL: ${CANDIDATE_POOL:-24}
-      # Reranker-only (the cross-encoder's max sequence length); inert when
-      # RERANK_BACKEND=none, consulted only by torch/onnx.
-      RERANK_MAX_LENGTH: ${RERANK_MAX_LENGTH:-192}
       # Prompt-injection TEST overlay. Empty (the default) = off, so production
       # and the eval harness never load it. Set it to enable the test, e.g.:
       #   INJECTION_FIXTURE_PATH=/fixtures/injection_fixtures.json \
@@ -219,57 +191,10 @@ services:
       # Prompt-injection test fixtures. Present in the container but inert unless
       # INJECTION_FIXTURE_PATH points at one (see above).
       - ./services/retrieval/fixtures:/fixtures:ro
-      # BGE-M3 + the reranker are ~4.5 GB; cache them so only the first boot
-      # pays the download.
+      # BGE-M3 is ~2.1 GB; cache it so only the first boot pays the download.
       - hf-cache:/hf
     ports:
       - "8001:8001"
-
-  # Opt-in (profile "local-llm"): the local llama.cpp generator. Off by default —
-  # generation now runs via the OpenAI-compatible driver against a hosted API, so
-  # starting this would load a ~2 GB GGUF into RAM to satisfy a healthcheck no one
-  # waits on, and would ship a ~2.17 GB image plus ~2 GB of weights to a deploy
-  # for nothing. Kept fully functional as the offline / rate-limited fallback:
-  #   docker compose --profile local-llm up -d      (pair with AI_DRIVER=grpc)
-  generation:
-    build: services/generation
-    restart: unless-stopped
-    profiles: ["local-llm"]
-    environment:
-      # Point GENERATION_MODEL_PATH at any Hugging Face hub id or a mounted
-      # checkpoint directory; set GENERATION_MODEL_NAME to match so responses
-      # report the model actually served. GENERATION_PROMPT_STYLE selects the
-      # prompt: "chat" for instruction-tuned chat models (the default),
-      # "qa" for seq2seq stand-ins, "clue" for the fine-tuned BART checkpoint.
-      # llama.cpp with 4-bit weights, not transformers: CPU generation is bound
-      # by memory traffic per token, so a quantized 3B model is both faster and
-      # far more capable than the float32 0.5B it replaces. See
-      # services/generation/app/llama_engine.py for the measurements.
-      BACKEND: ${GENERATION_BACKEND:-llama}
-      # Physical cores, not logical. llama.cpp's auto-detection sees the 16
-      # hyperthreads of this 8-core host; oversubscribing memory-bound GEMM
-      # makes the threads contend for the same cache lines.
-      N_THREADS: ${GENERATION_N_THREADS:-8}
-      GGUF_REPO: ${GENERATION_GGUF_REPO:-Qwen/Qwen2.5-3B-Instruct-GGUF}
-      GGUF_FILE: ${GENERATION_GGUF_FILE:-*q4_k_m*.gguf}
-      MODEL_PATH: ${GENERATION_MODEL_PATH:-Qwen/Qwen2.5-1.5B-Instruct}
-      MODEL_NAME: ${GENERATION_MODEL_NAME:-qwen2.5-3b-instruct-q4_k_m}
-      PROMPT_STYLE: ${GENERATION_PROMPT_STYLE:-chat}
-      # The Macedonian legal system prompt is shared with the PHP OpenAI-compatible
-      # driver via a single file, mounted below. prompt.py loads it from here.
-      LEGAL_PROMPT_PATH: /prompts/legal_mk.txt
-      # float32, deliberately — NOT "auto". Qwen2.5's config declares bfloat16,
-      # which PyTorch emulates on a non-AMX CPU: one short answer took over 400s
-      # that way, versus seconds at float32. Same trap as the retrieval service.
-      MODEL_DTYPE: ${GENERATION_MODEL_DTYPE:-float32}
-      MAX_OUTPUT_TOKENS: ${GENERATION_MAX_OUTPUT_TOKENS:-192}
-    volumes:
-      - ./services/generation/app:/srv/app:ro
-      - ./artifacts/models:/models:ro
-      - ./prompts:/prompts:ro
-      - hf-cache:/hf
-    ports:
-      - "8002:8002"
 
   laravel:
     build: .
@@ -289,10 +214,6 @@ services:
         condition: service_healthy
       retrieval:
         condition: service_healthy
-      # generation is intentionally NOT a dependency: it is opt-in via the
-      # local-llm profile. The default (hosted-API) path never calls it, and
-      # gating on it would only delay startup and force a ~2 GB GGUF to load.
-      # Under --profile local-llm it starts alongside but is not gated here.
     # --no-reload is required for PHP_CLI_SERVER_WORKERS to spawn multiple
     # workers; without it the built-in server is single-threaded and a long-lived
     # SSE stream would block every other request. Seed the news once after
@@ -300,8 +221,8 @@ services:
     command: sh -c "php artisan migrate --force && (php artisan news:scrape || true) && php artisan serve --host=0.0.0.0 --port=8000 --no-reload"
 
   # The multi-hop research agent, reached by the app over HTTP (POST /run,
-  # streaming NDJSON). Opt-in via the "agent" profile, like the local-llm one,
-  # because it needs a Sanctum token minted by hand:
+  # streaming NDJSON). Opt-in via the "agent" profile because it needs a
+  # Sanctum token minted by hand:
   #
   #   php artisan tinker --execute 'echo App\Models\User::first()->createToken("agent")->plainTextToken;'
   #   # then, in .env:  AGENT_API_TOKEN=<paste>  AGENT_SERVICE_TOKEN=<any secret>
@@ -373,12 +294,8 @@ services:
         condition: service_healthy
       retrieval:
         condition: service_healthy
-      # generation is intentionally NOT a dependency: it is opt-in via the
-      # local-llm profile. The default (hosted-API) path never calls it, and
-      # gating on it would only delay startup and force a ~2 GB GGUF to load.
-      # Under --profile local-llm it starts alongside but is not gated here.
-    # Processes StreamChatReply (retrieve + stream generation over gRPC, push
-    # chunks to Redis) and runs the scheduler (hourly news:scrape) in the
+    # Processes StreamChatReply (retrieve over gRPC, stream generation from the
+    # hosted endpoint, push chunks to Redis) and runs the scheduler in the
     # background.
     #
     # Deadline stack, innermost first — each inner timer fires and reports a

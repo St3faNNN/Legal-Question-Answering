@@ -21,7 +21,6 @@ class Candidate:
     chunk_id: int
     sources: list[str] = field(default_factory=list)
     fused_score: float = 0.0
-    rerank_score: float | None = None
 
 
 def reciprocal_rank_fusion(
@@ -61,7 +60,7 @@ def pack_context(candidates: list[Candidate], char_budget: int) -> tuple[str, in
 
     Returns the context string and how many candidates actually made it in. That
     count is reported all the way to the message metadata, so the gap between
-    "reranked to 10" and "the generator saw 4" is visible rather than silently
+    "returned 10" and "the generator saw 4" is visible rather than silently
     absorbed by the generator's own truncation.
     """
     if not candidates or char_budget <= 0:
@@ -76,7 +75,7 @@ def pack_context(candidates: list[Candidate], char_budget: int) -> tuple[str, in
         cost = len(block) + (separator_cost if parts else 0)
         if used + cost > char_budget:
             # Keep scanning: a later, shorter candidate may still fit, and
-            # dropping it would lose a citation the reranker ranked highly.
+            # dropping it would lose a citation RRF ranked highly.
             continue
         parts.append(block)
         used += cost

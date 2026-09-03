@@ -136,19 +136,3 @@ class FakeEmbedder:
         return self.dense, self.sparse
 
 
-class FakeReranker:
-    """Scores by position in a preferred-citation list, so tests can assert the
-    reranker's ordering is the one that reaches the generator."""
-
-    def __init__(self, prefer: list[str] | None = None):
-        self.prefer = prefer or []
-        self.loaded = True
-        self.scored: list[tuple[str, int]] = []
-
-    def score(self, question: str, passages: list[str]) -> list[float]:
-        self.scored.append((question, len(passages)))
-        scores = []
-        for passage in passages:
-            match = next((i for i, term in enumerate(self.prefer) if term in passage), None)
-            scores.append(100.0 - match if match is not None else 0.0)
-        return scores

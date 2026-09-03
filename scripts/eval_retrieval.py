@@ -52,11 +52,20 @@ from pb import retrieval_pb2, retrieval_pb2_grpc  # noqa: E402
 EVAL_DIR = REPO / "tests" / "eval"
 QUESTIONS = EVAL_DIR / "questions.yaml"
 RESULTS_DIR = EVAL_DIR / "results"
-CONFIG_KEYS = ["RERANK_BACKEND", "CANDIDATE_POOL", "RETRIEVAL_TOP_N", "RERANK_TOP_N", "RERANK_MAX_LENGTH", "QUANTIZE"]
+# The reranker was removed, so RERANK_BACKEND / RERANK_TOP_N / RERANK_MAX_LENGTH
+# are no longer captured. Runs recorded BEFORE the removal still carry them in
+# their stored config; `compare` only json.dumps that dict for the header, so
+# those files still read correctly — the header simply shows a key the service
+# no longer has, which is accurate history.
+CONFIG_KEYS = ["CANDIDATE_POOL", "RETRIEVAL_TOP_N", "QUANTIZE"]
 EXCERPT_CHARS = 500
 
+# The `rerank=` field disappeared from the log line when the cross-encoder was
+# removed. It is matched optionally so this harness reads BOTH the current
+# service and the archived logs of runs captured before the removal.
 STAGE_RE = re.compile(
-    r"stage_ms embed=(\d+) search=(\d+) fusion=(\d+) graph=(\d+) rerank=(\d+) pack=(\d+) total=(\d+)"
+    r"stage_ms embed=(\d+) search=(\d+) fusion=(\d+) graph=(\d+)"
+    r"(?: rerank=(\d+))? pack=(\d+) total=(\d+)"
 )
 ARTICLE_RE = re.compile(r"чл\.?\s*(\d+)")
 
@@ -95,7 +104,9 @@ def stage_timings(since_rfc3339: str, service_latency_ms: int) -> dict:
     for _ in range(6):
         matches = STAGE_RE.findall(_docker("logs", "retrieval", "--since", since_rfc3339))
         if matches:
-            embed, search, fusion, graph, rerank, pack, total = (int(x) for x in matches[-1])
+            embed, search, fusion, graph, rerank, pack, total = (
+                int(x) if x else None for x in matches[-1]
+            )
             return {
                 "embed": embed, "search": search, "fusion": fusion, "graph": graph,
                 "rerank": rerank, "pack": pack, "total": total,

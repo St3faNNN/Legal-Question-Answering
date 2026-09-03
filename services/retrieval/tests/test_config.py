@@ -41,19 +41,8 @@ def test_candidate_pool_covers_the_returned_window():
     assert settings.candidate_pool >= settings.retrieval_top_n
 
 
-def test_rerank_sequence_length_is_bounded():
-    """Cost is roughly linear in sequence length; chunks average ~300 tokens."""
-    assert get_settings().rerank_max_length <= 256
-
-
 def test_retrieval_top_n_is_the_requested_ten():
     assert get_settings().retrieval_top_n == 10
-
-
-def test_rerank_top_n_is_honoured_as_a_deprecated_alias(monkeypatch):
-    """Existing .env files that still set RERANK_TOP_N must not break silently."""
-    monkeypatch.setenv("RERANK_TOP_N", "7")
-    assert get_settings().retrieval_top_n == 7
 
 
 def test_retrieval_top_n_takes_precedence_over_the_alias(monkeypatch):
@@ -75,25 +64,6 @@ def test_quantization_is_off_by_default_so_local_dev_matches_production_weights(
     assert get_settings().quantize == "none"
 
 
-def test_rerank_backend_defaults_to_none_so_the_cross_encoder_is_not_loaded():
-    """The cross-encoder is out of the default load path: it cost ~1.5 GiB for a
-    recall@6 gain the product does not need (practitioners read the cited
-    provisions themselves). torch/onnx remain available for the eval harness."""
-    settings = get_settings()
-
-    assert settings.rerank_backend == "none"
-    # The onnx source is configured but only consulted when the backend is onnx.
-    assert settings.rerank_onnx_repo == "onnx-community/bge-reranker-v2-m3-ONNX"
-    assert settings.rerank_onnx_file == "onnx/model_int8.onnx"
-
-
-def test_rerank_backend_is_overridable_to_torch_or_onnx(monkeypatch):
-    monkeypatch.setenv("RERANK_BACKEND", "onnx")
-    assert get_settings().rerank_backend == "onnx"
-    monkeypatch.setenv("RERANK_BACKEND", "torch")
-    assert get_settings().rerank_backend == "torch"
-
-
 def test_every_latency_default_is_overridable(monkeypatch):
     monkeypatch.setenv("MODEL_DTYPE", "bfloat16")
     monkeypatch.setenv("QUANTIZE", "int8")
@@ -104,7 +74,6 @@ def test_every_latency_default_is_overridable(monkeypatch):
     assert settings.dtype == "bfloat16"
     assert settings.quantize == "int8"
     assert settings.candidate_pool == 50
-    assert settings.rerank_max_length == 512
 
 
 def test_sparse_arm_is_on_by_default():

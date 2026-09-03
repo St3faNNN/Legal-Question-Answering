@@ -12,10 +12,6 @@ class Settings:
     graph_path: str
     vector_db_path: str
     embed_model_path: str
-    reranker_model_path: str
-    rerank_backend: str  # "none" | "torch" | "onnx"
-    rerank_onnx_repo: str
-    rerank_onnx_file: str
     device: str  # "auto" | "cpu" | "cuda"
     dtype: str  # "auto" | "float32" | "bfloat16" | "float16"
     quantize: str  # "none" | "int8"
@@ -27,7 +23,6 @@ class Settings:
     rrf_k: int
     candidate_pool: int
     retrieval_top_n: int
-    rerank_max_length: int
     context_char_budget: int
 
 
@@ -36,22 +31,16 @@ def _flag(name: str, default: str) -> bool:
 
 
 def _resolve_top_n(default: int = 10) -> int:
-    """How many passages to return. Reads RETRIEVAL_TOP_N; falls back to the
-    deprecated RERANK_TOP_N (with a warning) so existing .env files keep working
-    now that nothing reranks. Empty strings — which docker-compose passes for an
-    unset ``${VAR:-}`` — count as unset."""
-    new = os.environ.get("RETRIEVAL_TOP_N") or None
-    old = os.environ.get("RERANK_TOP_N") or None
-    if new is not None:
-        return int(new)
-    if old is not None:
-        logger.warning(
-            "RERANK_TOP_N is deprecated (the reranker was removed) — use RETRIEVAL_TOP_N. "
-            "Honouring RERANK_TOP_N=%s for now.",
-            old,
-        )
-        return int(old)
-    return default
+    """How many passages to return, from RETRIEVAL_TOP_N.
+
+    An empty string — which docker-compose passes for an unset ``${VAR:-}`` —
+    counts as unset. The RERANK_TOP_N alias this used to honour was removed with
+    the reranker; nothing reads it any more, and a stale setting is now silently
+    ignored rather than silently obeyed.
+    """
+    value = os.environ.get("RETRIEVAL_TOP_N") or None
+
+    return int(value) if value is not None else default
 
 
 def get_settings() -> Settings:
@@ -59,37 +48,6 @@ def get_settings() -> Settings:
         graph_path=os.environ.get("GRAPH_PATH", "/data/graph.graphml"),
         vector_db_path=os.environ.get("VECTOR_DB_PATH", "/vectors/vectors.sqlite"),
         embed_model_path=os.environ.get("EMBED_MODEL_PATH", "BAAI/bge-m3"),
-        reranker_model_path=os.environ.get("RERANKER_MODEL_PATH", "BAAI/bge-reranker-v2-m3"),
-        # Reranker execution backend.
-        #
-        # DECISION (deliberate, measured): the cross-encoder reranker is OUT of
-        # the default path. "none" (default) never fetches, loads, or holds the
-        # reranker; ordering falls through to the RRF-fused pool. The measured
-        # trade, none/pool=24 vs the reranked onnx/pool=16 it replaced:
-        #     recall@16   0.8333  vs  0.8125   (a wider window recovers what the
-        #                                       cross-encoder's reordering bought)
-        #     latency     ~0.3s   vs  3.9s     (no per-candidate forward passes)
-        #     retrieval   2.98GiB vs  4.00GiB  (the ~1 GiB the reranker held)
-        # Why it's worth nothing to lose: the product shows the cited provisions
-        # to legal practitioners who read the articles themselves, so compressing
-        # the correct results into a shorter, better-ordered list bought them
-        # nothing — they scan the list. See tests/eval/results and
-        # [[reranker-removed-from-retrieval]].
-        # One thing lost with it: the rerank score was a clean abstention signal
-        # (unanswerable questions scored below a threshold); RRF fused scores do
-        # NOT separate answerable from unanswerable, so that guard is gone.
-        #
-        #   "torch" keeps the transformers cross-encoder path unchanged.
-        #   "onnx" runs a prebuilt int8 ONNX export via onnxruntime — markedly
-        #     faster on an AVX2 CPU, where torch's dynamic int8 has no VNNI to
-        #     accelerate it.
-        # Both are retained for the eval harness to switch back and compare. The
-        # embedder is unaffected. For torch/onnx the tokenizer is always
-        # RERANKER_MODEL_PATH (same tokens), so a ranking difference between those
-        # two is model numerics, not tokenization.
-        rerank_backend=os.environ.get("RERANK_BACKEND", "none"),
-        rerank_onnx_repo=os.environ.get("RERANK_ONNX_REPO", "onnx-community/bge-reranker-v2-m3-ONNX"),
-        rerank_onnx_file=os.environ.get("RERANK_ONNX_FILE", "onnx/model_int8.onnx"),
         device=os.environ.get("DEVICE", "auto"),
         # float32, deliberately. bfloat16 would halve the encoder pair from
         # ~4.6 GB to ~2.3 GB, but PyTorch has no fast CPU path for bf16 without
@@ -98,12 +56,25 @@ def get_settings() -> Settings:
         # a GPU, or on a CPU new enough to have AMX.
         dtype=os.environ.get("MODEL_DTYPE", "float32"),
         # Dynamic int8 quantization of the embedder's Linear layers. Off by
-        # default so local dev and the test doubles are unaffected. The RAM saving
-        # is marginal, NOT the ~4.6 GB -> ~2 GB once claimed here: retrieval
-        # measured 5.14 GiB *with* int8. What int8 actually bought was latency —
-        # it roughly halved the (former) cross-encoder's forward pass on this
-        # AVX2-only CPU. With the reranker gone int8 only touches the embedder, so
-        # its benefit is now small; kept for now, but it is a candidate to drop.
+        # default here so local dev and the test doubles are unaffected;
+        # docker-compose sets int8 for the deployed service.
+        #
+        # What it does, now that the embedder is the only model left: it quantizes
+        # BGE-M3's Linear weights to int8 and dequantizes per matmul. The RAM
+        # saving is marginal and was never the ~4.6 GB -> ~2 GB once claimed here —
+        # retrieval measured 5.14 GiB *with* int8 in place.
+        #
+        # The old justification is void. int8's measured benefit was halving the
+        # CROSS-ENCODER's forward pass, and the cross-encoder is gone. This CPU is
+        # AVX2-only with no VNNI, so there is no native int8 GEMM to hit: the
+        # dequantize-per-matmul overhead can offset the narrower weights entirely.
+        #
+        # Kept because warm retrieval is already ~0.1-0.3s and dominated by
+        # tokenization and the sparse arm, so neither keeping nor dropping it moves
+        # a number anyone notices — and flipping it would invalidate the eval runs
+        # that were captured with QUANTIZE=int8. It is a free candidate to drop the
+        # next time the eval set is re-run; there is no longer a reason to keep it
+        # beyond continuity.
         quantize=os.environ.get("QUANTIZE", "none"),
         # BGE-M3's lexical arm needs the sparse_linear head, which ships beside
         # the model on the hub. When it cannot be fetched the service degrades
@@ -114,20 +85,28 @@ def get_settings() -> Settings:
         graph_hops=int(os.environ.get("GRAPH_HOPS", "1")),
         graph_max_expand=int(os.environ.get("GRAPH_MAX_EXPAND", "20")),
         rrf_k=int(os.environ.get("RRF_K", "60")),
-        # Size of the RRF-fused candidate pool. With the reranker gone there is no
-        # per-candidate scoring cost, so this is nearly free to widen — and it
-        # must be >= RETRIEVAL_TOP_N, or the pool caps the result (build_context
-        # warns if it isn't). 24 gives the returned window headroom and lets graph
-        # expansions compete; a wider pool recovers the recall the reranker's
-        # reordering used to buy (recall@16 0.8125 -> 0.8333 going 16 -> 24).
+        # Size of the RRF-fused candidate pool, and now the ONLY ranking stage.
+        # It must be >= RETRIEVAL_TOP_N or the pool caps the result (build_context
+        # warns if it isn't).
+        #
+        # 24 still earns its keep with nothing downstream: the pool is not a
+        # shortlist for a reranker any more, it is the population RRF orders. A
+        # wider pool lets dense, sparse and graph-expansion candidates compete
+        # before the window is taken, and that competition is what recovered the
+        # recall the reranker's reordering used to buy (recall@16 0.8125 -> 0.8333
+        # going 16 -> 24). Widening costs one more RRF term per candidate — no
+        # model call — so the only price is the fusion loop.
+        #
+        # It is not free above the returned window, though: candidates ranked
+        # 11-24 are computed and then discarded by the RETRIEVAL_TOP_N=10 slice.
+        # That headroom is what makes the ordering robust, but if the window ever
+        # rises to 16 the pool should rise with it.
         candidate_pool=int(os.environ.get("CANDIDATE_POOL", "24")),
-        # How many passages to return. RETRIEVAL_TOP_N, formerly RERANK_TOP_N
-        # (nothing reranks now — the pool is returned in RRF order); the old name
-        # is still honoured with a warning. See _resolve_top_n.
+        # How many passages to return, taken from the head of the RRF order.
+        # Also sizes the app's provisions panel (config/ai.php reads the same
+        # variable), so the panel can never be shorter than the generation
+        # context. See _resolve_top_n.
         retrieval_top_n=_resolve_top_n(10),
-        # Chunks average ~856 characters (~300 tokens); 256 covers the topic of
-        # a legal article, and cost is roughly linear in sequence length.
-        rerank_max_length=int(os.environ.get("RERANK_MAX_LENGTH", "256")),
         # Sized against the generator's 8192-token input window: Macedonian
         # Cyrillic runs at roughly 2-3 characters per token, so ~12k characters
         # leaves ample room for the system prompt and the answer. The generator's

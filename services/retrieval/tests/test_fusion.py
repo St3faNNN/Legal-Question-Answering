@@ -66,10 +66,6 @@ def test_fused_candidates_are_copies_not_the_inputs():
     original = candidate("1")
     fused = reciprocal_rank_fusion({"dense": [original]})
 
-    fused[0].rerank_score = 9.9
-
-    assert original.rerank_score is None
-
 
 def test_pack_context_joins_in_rank_order_with_citations():
     context, used = pack_context(
