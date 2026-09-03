@@ -28,12 +28,20 @@ beforeEach(function (): void {
     ]);
 });
 
-/** A conversation holding one question and the pipeline answer to it. */
+/**
+ * A conversation holding one question and the pipeline answer to it.
+ *
+ * Returns the question as well as the answer: escalation now names the question
+ * by id rather than inferring it, so every caller needs both.
+ *
+ * @return array{0: Conversation, 1: Message, 2: Message}
+ */
 function conversationWithPipelineAnswer(User $user, array $metadata = []): array
 {
     $conversation = Conversation::factory()->for($user)->create();
 
-    $conversation->messages()->create([
+    /** @var Message $question */
+    $question = $conversation->messages()->create([
         'role' => 'user',
         'content' => 'Кои се основите за отказ поради технолошки вишок и колкава испратнина следува?',
     ]);
@@ -49,7 +57,7 @@ function conversationWithPipelineAnswer(User $user, array $metadata = []): array
         ], $metadata),
     ]);
 
-    return [$conversation, $answer];
+    return [$conversation, $answer, $question];
 }
 
 describe('POST /chat/escalate', function (): void {
@@ -64,11 +72,12 @@ describe('POST /chat/escalate', function (): void {
 
         $user = User::factory()->create();
         actingAs($user);
-        [$conversation, $answer] = conversationWithPipelineAnswer($user);
+        [$conversation, $answer, $question] = conversationWithPipelineAnswer($user);
 
         postJson('/api/v1/chat/escalate', [
             'conversation_id' => $conversation->id,
             'message_id' => $answer->id,
+            'question_message_id' => $question->id,
         ])
             ->assertStatus(202)
             ->assertJsonStructure(['conversation' => ['id'], 'stream_id', 'escalated_from', 'cost_units', 'remaining_units'])
@@ -79,7 +88,8 @@ describe('POST /chat/escalate', function (): void {
         Queue::assertPushed(
             RunAgentEscalation::class,
             fn (RunAgentEscalation $job): bool => str_contains($job->question, 'технолошки вишок')
-                && $job->sourceMessageId === $answer->id,
+                && $job->sourceMessageId === $answer->id
+                && $job->questionMessageId === $question->id,
         );
     });
 
@@ -87,13 +97,14 @@ describe('POST /chat/escalate', function (): void {
         Queue::fake();
 
         $owner = User::factory()->create();
-        [$conversation, $answer] = conversationWithPipelineAnswer($owner);
+        [$conversation, $answer, $question] = conversationWithPipelineAnswer($owner);
 
         actingAs(User::factory()->create());
 
         postJson('/api/v1/chat/escalate', [
             'conversation_id' => $conversation->id,
             'message_id' => $answer->id,
+            'question_message_id' => $question->id,
         ])->assertNotFound();
 
         Queue::assertNothingPushed();
@@ -106,7 +117,7 @@ describe('POST /chat/escalate', function (): void {
         actingAs($user);
 
         $conversation = Conversation::factory()->for($user)->create();
-        $conversation->messages()->create(['role' => 'user', 'content' => 'Здраво']);
+        $question = $conversation->messages()->create(['role' => 'user', 'content' => 'Здраво']);
         $gated = $conversation->messages()->create([
             'role' => 'assistant',
             'content' => 'Оваа алатка одговара само на правни прашања…',
@@ -116,6 +127,7 @@ describe('POST /chat/escalate', function (): void {
         postJson('/api/v1/chat/escalate', [
             'conversation_id' => $conversation->id,
             'message_id' => $gated->id,
+            'question_message_id' => $question->id,
         ])
             ->assertStatus(422)
             ->assertJsonPath('error.reason', 'gated');
@@ -130,7 +142,7 @@ describe('POST /chat/escalate', function (): void {
         actingAs($user);
 
         $conversation = Conversation::factory()->for($user)->create();
-        $conversation->messages()->create([
+        $question = $conversation->messages()->create([
             'role' => 'user',
             'content' => 'Кои се чиновите во Армијата на Република Северна Македонија?',
         ]);
@@ -143,6 +155,7 @@ describe('POST /chat/escalate', function (): void {
         postJson('/api/v1/chat/escalate', [
             'conversation_id' => $conversation->id,
             'message_id' => $refusal->id,
+            'question_message_id' => $question->id,
         ])
             ->assertStatus(422)
             ->assertJsonPath('error.reason', 'refused');
@@ -155,7 +168,7 @@ describe('POST /chat/escalate', function (): void {
 
         $user = User::factory()->create();
         actingAs($user);
-        [$conversation] = conversationWithPipelineAnswer($user);
+        [$conversation, , $question] = conversationWithPipelineAnswer($user);
 
         $agentAnswer = $conversation->messages()->create([
             'role' => 'assistant',
@@ -166,6 +179,7 @@ describe('POST /chat/escalate', function (): void {
         postJson('/api/v1/chat/escalate', [
             'conversation_id' => $conversation->id,
             'message_id' => $agentAnswer->id,
+            'question_message_id' => $question->id,
         ])
             ->assertStatus(422)
             ->assertJsonPath('error.reason', 'already_escalated');
@@ -177,11 +191,12 @@ describe('POST /chat/escalate', function (): void {
 
         $user = User::factory()->create();
         actingAs($user);
-        [$conversation, $answer] = conversationWithPipelineAnswer($user);
+        [$conversation, $answer, $question] = conversationWithPipelineAnswer($user);
 
         postJson('/api/v1/chat/escalate', [
             'conversation_id' => $conversation->id,
             'message_id' => $answer->id,
+            'question_message_id' => $question->id,
         ])
             ->assertStatus(422)
             ->assertJsonPath('error.reason', 'not_configured');
@@ -208,18 +223,20 @@ describe('the daily generation budget', function (): void {
 
         $user = User::factory()->create();
         actingAs($user);
-        [$conversation, $answer] = conversationWithPipelineAnswer($user);
+        [$conversation, $answer, $question] = conversationWithPipelineAnswer($user);
 
         // 4 of 6 units.
         postJson('/api/v1/chat/escalate', [
             'conversation_id' => $conversation->id,
             'message_id' => $answer->id,
+            'question_message_id' => $question->id,
         ])->assertStatus(202);
 
         // A second run needs 4 more and only 2 remain.
         postJson('/api/v1/chat/escalate', [
             'conversation_id' => $conversation->id,
             'message_id' => $answer->id,
+            'question_message_id' => $question->id,
         ])
             ->assertStatus(429)
             ->assertJsonPath('error.reason', 'budget_exhausted')
@@ -304,7 +321,7 @@ describe('GET /conversations/{id}/messages/{id}/trace', function (): void {
     it('404s for a pipeline answer, which has no trajectory', function (): void {
         $user = User::factory()->create();
         actingAs($user);
-        [$conversation, $answer] = conversationWithPipelineAnswer($user);
+        [$conversation, $answer, $question] = conversationWithPipelineAnswer($user);
 
         getJson("/api/v1/conversations/{$conversation->id}/messages/{$answer->id}/trace")
             ->assertNotFound();
@@ -312,7 +329,7 @@ describe('GET /conversations/{id}/messages/{id}/trace', function (): void {
 
     it('404s for a message in somebody else\'s conversation', function (): void {
         $owner = User::factory()->create();
-        [$conversation, $answer] = conversationWithPipelineAnswer($owner);
+        [$conversation, $answer, $question] = conversationWithPipelineAnswer($owner);
 
         actingAs(User::factory()->create());
 

@@ -70,12 +70,12 @@ class EscalationService
      * Escalate the question a given assistant message answered. Charges the
      * budget, then dispatches the run onto the same stream the pipeline uses.
      *
-     * @return array{conversation: Conversation, message_id: int, stream_id: string, cost: int, remaining: int}
+     * @return array{conversation: Conversation, message_id: int, question_message_id: int, stream_id: string, cost: int, remaining: int}
      *
      * @throws EscalationNotAvailableException
      * @throws GenerationBudgetExceededException
      */
-    public function escalate(User $user, int $conversationId, int $messageId): array
+    public function escalate(User $user, int $conversationId, int $messageId, int $questionMessageId): array
     {
         $receivedAt = microtime(true);
 
@@ -86,13 +86,13 @@ class EscalationService
 
         $this->assertEscalatable($message);
 
-        $question = $this->questionAnsweredBy($conversation, $message);
+        $question = $this->questionToEscalate($conversation, $message, $questionMessageId);
 
         // The non-legal gate stays ahead of everything, exactly as it does for the
         // pipeline: a greeting must never reach a 25k-token run. The gated reply
         // itself is already refused above, but a question can be re-checked here
         // for free, and the job checks a third time.
-        if ($this->gate->shouldGate($question)) {
+        if ($this->gate->shouldGate($question->content)) {
             throw new EscalationNotAvailableException('gated', 'Ова не е правно прашање.');
         }
 
@@ -100,20 +100,31 @@ class EscalationService
         $this->budget->spend($user, $cost);
 
         $streamId = (string) Str::uuid();
-        Redis::setex("chat:stream:{$streamId}:user", 300, (string) $user->id);
+        Redis::setex("chat:stream:{$streamId}:user", (int) config('ai.stream.key_ttl'), (string) $user->id);
 
-        RunAgentEscalation::dispatch($conversation->id, $streamId, $question, $message->id, $receivedAt);
+        RunAgentEscalation::dispatch(
+            $conversation->id,
+            $streamId,
+            $question->content,
+            $message->id,
+            $question->id,
+            $receivedAt,
+        );
 
         $this->logger->info('agent.escalation_started', [
             'conversation_id' => $conversation->id,
             'stream_id' => $streamId,
             'source_message_id' => $message->id,
+            // Logged so a run that answered the wrong question is visible from
+            // the log alone, without reconstructing the thread by hand.
+            'question_message_id' => $question->id,
             'cost_units' => $cost,
         ]);
 
         return [
             'conversation' => $conversation,
             'message_id' => $message->id,
+            'question_message_id' => $question->id,
             'stream_id' => $streamId,
             'cost' => $cost,
             'remaining' => $this->budget->remaining($user),
@@ -158,23 +169,66 @@ class EscalationService
     }
 
     /**
-     * The user question this assistant message answered: the nearest preceding
-     * user message in the conversation. The agent re-answers the question, not
-     * the pipeline's answer to it.
+     * The user message the client says was escalated, resolved by id and then
+     * checked -- never inferred.
+     *
+     * This replaced a positional lookup ("the nearest preceding user message")
+     * that was wrong in production. That query ran through
+     * {@see Conversation::messages()}, which carries orderBy('created_at') on the
+     * relation itself, so the orderByDesc('id') layered on top was appended as a
+     * SECOND sort key: the statement resolved to
+     * `ORDER BY created_at ASC, id DESC`, and first() returned the OLDEST user
+     * message in the conversation. A procurement question was escalated and the
+     * agent was handed the thread's opening question about military service,
+     * which is outside the corpus, so it refused without ever searching.
+     *
+     * The lesson is not "order by id instead". Any positional rule is a guess at
+     * which question the user meant, and the guess becomes invisible the moment
+     * the run starts. The client renders the thread and knows exactly which
+     * answer was clicked, so it sends the pairing; this method's job is to refuse
+     * a pairing that does not hold:
+     *
+     *   - the message must exist in THIS conversation (not another user's),
+     *   - it must be a user turn, not an assistant one,
+     *   - it must precede the answer being escalated,
+     *   - it must not be empty.
+     *
+     * A caller that lies gets a 422, not a 25k-token run against the wrong
+     * question.
      */
-    private function questionAnsweredBy(Conversation $conversation, Message $message): string
+    private function questionToEscalate(Conversation $conversation, Message $answer, int $questionMessageId): Message
     {
         /** @var Message|null $question */
-        $question = $conversation->messages()
-            ->where('role', 'user')
-            ->where('id', '<', $message->id)
-            ->orderByDesc('id')
-            ->first();
+        $question = $conversation->messages()->whereKey($questionMessageId)->first();
 
-        if ($question === null || trim($question->content) === '') {
-            throw new EscalationNotAvailableException('no_question', 'Не е пронајдено прашањето на кое се однесува овој одговор.');
+        if ($question === null) {
+            throw new EscalationNotAvailableException(
+                'question_not_found',
+                'Прашањето не е пронајдено во овој разговор.',
+            );
         }
 
-        return $question->content;
+        if ($question->role !== 'user') {
+            throw new EscalationNotAvailableException(
+                'question_not_a_user_message',
+                'Може да се продлабочи само прашање поставено од корисникот.',
+            );
+        }
+
+        if ($question->id >= $answer->id) {
+            throw new EscalationNotAvailableException(
+                'question_after_answer',
+                'Прашањето мора да претходи на одговорот што се продлабочува.',
+            );
+        }
+
+        if (trim($question->content) === '') {
+            throw new EscalationNotAvailableException(
+                'no_question',
+                'Не е пронајдено прашањето на кое се однесува овој одговор.',
+            );
+        }
+
+        return $question;
     }
 }

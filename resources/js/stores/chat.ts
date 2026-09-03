@@ -74,11 +74,32 @@ export const useChatStore = defineStore('chat', () => {
     }
 
     /**
+     * The user message an answer in the thread responded to: the nearest user
+     * turn ABOVE it in the rendered order.
+     *
+     * This is the pairing the reader sees, and it is resolved here — once,
+     * against the array actually on screen — rather than on the server, which has
+     * no view of what was rendered and previously got it wrong by re-deriving it
+     * from a relation whose ordering it did not control. Returns null when there
+     * is no such turn, so the caller can decline rather than send a guess.
+     */
+    function questionMessageIdFor(answerId: number): number | null {
+        const index = messages.value.findIndex((m) => m.id === answerId)
+        if (index === -1) return null
+
+        for (let i = index - 1; i >= 0; i--) {
+            const candidate = messages.value[i]
+            if (candidate.role === 'user' && candidate.id > 0) return candidate.id
+        }
+        return null
+    }
+
+    /**
      * Escalate an existing answer to the research agent. Costs several times a
      * normal question, so it is only ever reached by an explicit user action —
      * no signal reliably detects an incomplete pipeline answer.
      */
-    async function escalate(messageId: number, conversationId: number) {
+    async function escalate(messageId: number, conversationId: number, questionMessageId: number) {
         sending.value = true
         escalating.value = true
         error.value = null
@@ -86,7 +107,7 @@ export const useChatStore = defineStore('chat', () => {
         agentSearches.value = []
 
         try {
-            const { stream_id } = await chatApi.escalate(conversationId, messageId)
+            const { stream_id } = await chatApi.escalate(conversationId, messageId, questionMessageId)
             await streamReply(stream_id)
         } catch (e: any) {
             error.value = e?.response?.data?.message ?? e?.message ?? 'Продлабоченото истражување не успеа.'
@@ -202,5 +223,8 @@ export const useChatStore = defineStore('chat', () => {
         agentSearches.value = []
     }
 
-    return { messages, sending, error, status, agentSearches, escalating, send, escalate, setMessages, reset }
+    return {
+        messages, sending, error, status, agentSearches, escalating,
+        send, escalate, questionMessageIdFor, setMessages, reset,
+    }
 })

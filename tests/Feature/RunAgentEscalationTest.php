@@ -59,9 +59,14 @@ function severanceDoneEvent(): array
     ];
 }
 
-function runEscalationJob(int $conversationId, string $streamId, string $question, RunsLegalResearch $agent): RunAgentEscalation
-{
-    $job = new RunAgentEscalation($conversationId, $streamId, $question, 7, microtime(true));
+function runEscalationJob(
+    int $conversationId,
+    string $streamId,
+    string $question,
+    RunsLegalResearch $agent,
+    ?int $questionMessageId = null,
+): RunAgentEscalation {
+    $job = new RunAgentEscalation($conversationId, $streamId, $question, 7, $questionMessageId, microtime(true));
 
     $job->handle($agent, app(AgentReplyComposer::class), app(AiLogger::class), app(NonLegalInputGate::class));
 
@@ -98,8 +103,17 @@ describe('RunAgentEscalation', function (): void {
         captureAgentStream();
 
         $conversation = Conversation::factory()->for(User::factory())->create();
+        // A real row: question_message_id is a foreign key, so the run records an
+        // id that resolves rather than a number that merely looks like one.
+        $question = $conversation->messages()->create(['role' => 'user', 'content' => 'Кои се основите за отказ?']);
 
-        runEscalationJob($conversation->id, 'esc-2', 'Кои се основите за отказ?', new FakeAgentClient([severanceDoneEvent()]));
+        runEscalationJob(
+            $conversation->id,
+            'esc-2',
+            'Кои се основите за отказ?',
+            new FakeAgentClient([severanceDoneEvent()]),
+            $question->id,
+        );
 
         $message = $conversation->messages()->where('role', 'assistant')->first();
 
@@ -120,6 +134,9 @@ describe('RunAgentEscalation', function (): void {
 
         expect($run)->not->toBeNull()
             ->and($run->run_id)->toBe('20260829-124011-gbwlbb')
+            // The question is an explicit column now, not something re-derived
+            // from position afterwards.
+            ->and($run->question_message_id)->toBe($question->id)
             ->and($run->api_calls)->toBe(4)
             ->and($run->total_tokens)->toBe(25397)
             ->and($run->steps)->toHaveCount(3)
@@ -176,7 +193,7 @@ describe('RunAgentEscalation', function (): void {
     it('publishes a terminal error from failed() so the browser unblocks', function (): void {
         $published = captureAgentStream();
 
-        $job = new RunAgentEscalation(1, 'esc-fail', 'Кој е рокот?', null, microtime(true));
+        $job = new RunAgentEscalation(1, 'esc-fail', 'Кој е рокот?', null, null, microtime(true));
         $job->failed(AiServiceException::connectionFailed('agent', new RuntimeException('connection refused')));
 
         expect($published->getArrayCopy())->toHaveCount(1)
@@ -186,7 +203,7 @@ describe('RunAgentEscalation', function (): void {
     });
 
     it('does not retry, because a run is billed from its first model call', function (): void {
-        $job = new RunAgentEscalation(1, 'esc-cfg', 'Прашање?', null, microtime(true));
+        $job = new RunAgentEscalation(1, 'esc-cfg', 'Прашање?', null, null, microtime(true));
 
         expect($job->tries)->toBe(1);
     });
@@ -194,6 +211,6 @@ describe('RunAgentEscalation', function (): void {
     it('sizes the job timeout above the service\'s own whole-run deadline', function (): void {
         config(['agent.timeout' => 120]);
 
-        expect((new RunAgentEscalation(1, 'esc-t', 'Прашање?', null, microtime(true)))->timeout)->toBe(140);
+        expect((new RunAgentEscalation(1, 'esc-t', 'Прашање?', null, null, microtime(true)))->timeout)->toBe(140);
     });
 });

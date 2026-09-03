@@ -77,7 +77,22 @@ class AgentReplyComposer
                 'agent' => true,
                 'run_id' => is_string($done['runId'] ?? null) ? $done['runId'] : null,
                 'outcome' => is_string($done['outcome'] ?? null) ? $done['outcome'] : null,
-                'refused' => ($done['outcome'] ?? null) === 'exhausted',
+                // A refusal is an answer that rests on no retrieved provision.
+                //
+                // 'exhausted' is one way to get there: the step budget ran out and
+                // trace.ts synthesised an out-of-scope message. The other, which
+                // this flag used to miss, is a run that answers in a single step
+                // because the agent's prompt recognised the topic as outside the
+                // ten laws and declined to search at all. That outcome is
+                // 'answered', so keying only on 'exhausted' left a scope refusal
+                // marked as a normal answer and uncounted in the failures panel.
+                //
+                // The structural test is used rather than matching refusal text:
+                // the agent and the pipeline have different prompts and phrase
+                // refusals differently, and $matched already falls back to the
+                // best-scoring passages whenever any exist -- so an empty panel
+                // means nothing was retrieved, which no grounded answer can claim.
+                'refused' => ($done['outcome'] ?? null) === 'exhausted' || $matched === [],
                 'searches' => $this->searchQueries($done['steps'] ?? []),
                 // Same keys a pipeline answer uses, so AssistantResponse renders
                 // the provisions with no branching.

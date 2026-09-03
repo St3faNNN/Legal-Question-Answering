@@ -76,6 +76,28 @@ it('keeps the searches on the message so they survive a reload', function (): vo
         ->toBe([['tool' => 'search_law', 'query' => 'испратнина']]);
 });
 
+it('treats a single-step scope refusal as a refusal, not as a normal answer', function (): void {
+    // The production case: the agent recognised the topic as outside the ten laws
+    // and declined without searching. outcome is 'answered' and steps is 1, so
+    // keying refused only on 'exhausted' left it counted as a successful answer
+    // and missing from the failures panel.
+    $payload = composed([
+        'outcome' => 'answered',
+        'answer' => 'Прашањето за воениот рок не е опфатено во достапниот правен корпус.',
+        'passages' => [],
+        'steps' => [['index' => 0, 'calls' => []]],
+    ]);
+
+    expect($payload['metadata']['refused'])->toBeTrue()
+        ->and($payload['metadata']['top_chunks'])->toBe([]);
+});
+
+it('does not mark a grounded answer as refused', function (): void {
+    // The guard on the above: an answer resting on retrieved provisions is never
+    // a refusal, whatever its wording.
+    expect(composed()['metadata']['refused'])->toBeFalse();
+});
+
 it('treats a spent step budget as a refusal, so the answer is not offered as findings', function (): void {
     $payload = composed(['outcome' => 'exhausted', 'answer' => 'Не пронајдов одговор во корпусот по 8 пребарувања.']);
 

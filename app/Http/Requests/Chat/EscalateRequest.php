@@ -24,7 +24,17 @@ class EscalateRequest extends FormRequest
     {
         return [
             'conversation_id' => ['required', 'integer'],
+            // The assistant answer the control was clicked on.
             'message_id' => ['required', 'integer'],
+            // The user message that answer responded to. REQUIRED, and with no
+            // server-side fallback on purpose. It used to be derived by walking
+            // back to "the nearest preceding user message", which resolved
+            // through a relation ordered by created_at and returned the oldest
+            // question in the conversation instead of the escalated one. The
+            // client renders the thread and therefore knows which question the
+            // user escalated; the server validates that claim rather than
+            // re-guessing it.
+            'question_message_id' => ['required', 'integer'],
         ];
     }
 }

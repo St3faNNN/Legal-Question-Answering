@@ -148,8 +148,17 @@ async function handleSubmit() {
 async function handleEscalate(messageId: number) {
     if (chat.sending || currentConversationId.value === undefined) return
 
+    // Resolve the question from the rendered thread and send it explicitly. If it
+    // cannot be resolved, decline rather than let the server fall back to a
+    // guess — there is no fallback any more, by design.
+    const questionMessageId = chat.questionMessageIdFor(messageId)
+    if (questionMessageId === null) {
+        chat.error = 'Не е пронајдено прашањето на кое се однесува овој одговор.'
+        return
+    }
+
     try {
-        await chat.escalate(messageId, currentConversationId.value)
+        await chat.escalate(messageId, currentConversationId.value, questionMessageId)
     } catch {
         // The error is surfaced through chat.error below.
     } finally {

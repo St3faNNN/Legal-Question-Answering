@@ -66,6 +66,13 @@ class RunAgentEscalation implements ShouldQueue
         public readonly string $question,
         /** The pipeline answer this escalates from — recorded for the audit trail. */
         public readonly ?int $sourceMessageId,
+        /**
+         * The user message $question was read from, resolved by id at the API
+         * boundary. Persisted on the run so "which question did this answer?" is a
+         * column rather than something re-derived from position later — the
+         * re-derivation is what previously handed a run the wrong question.
+         */
+        public readonly ?int $questionMessageId,
         /** Shared-clock epoch captured before queueing; anchors the end-to-end timer. */
         public readonly float $receivedAt,
     ) {
@@ -162,6 +169,7 @@ class RunAgentEscalation implements ShouldQueue
 
         $metadata = $payload['metadata'];
         $metadata['escalated_from_message_id'] = $this->sourceMessageId;
+        $metadata['question_message_id'] = $this->questionMessageId;
 
         $conversation = Conversation::findOrFail($this->conversationId);
         /** @var Message $message */
@@ -178,6 +186,7 @@ class RunAgentEscalation implements ShouldQueue
         $message->agentRun()->create([
             'run_id' => $metadata['run_id'] ?? '',
             'question' => $this->question,
+            'question_message_id' => $this->questionMessageId,
             'outcome' => $metadata['outcome'] ?? 'answered',
             'model' => $payload['model'],
             'steps_count' => $metadata['agent_steps'],
@@ -252,6 +261,6 @@ class RunAgentEscalation implements ShouldQueue
     private function publish(string $key, array $event): void
     {
         Redis::rpush($key, json_encode($event, JSON_UNESCAPED_UNICODE));
-        Redis::expire($key, 300);
+        Redis::expire($key, (int) config('ai.stream.key_ttl'));
     }
 }
