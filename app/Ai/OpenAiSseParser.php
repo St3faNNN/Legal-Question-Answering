@@ -1,6 +1,6 @@
 <?php
 
-namespace App\Grpc;
+namespace App\Ai;
 
 /**
  * Pure, incremental parser for an OpenAI-compatible chat-completions SSE stream.

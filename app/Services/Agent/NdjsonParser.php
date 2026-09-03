@@ -2,7 +2,7 @@
 
 namespace App\Services\Agent;
 
-use App\Grpc\OpenAiSseParser;
+use App\Ai\OpenAiSseParser;
 
 /**
  * Pure, incremental parser for a newline-delimited JSON stream.

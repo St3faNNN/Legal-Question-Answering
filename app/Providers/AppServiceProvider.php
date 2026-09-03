@@ -2,11 +2,11 @@
 
 namespace App\Providers;
 
+use App\Ai\GenerationClient;
+use App\Ai\GrpcRetrievalClient;
+use App\Ai\OpenAiCompatibleGenerationClient;
+use App\Ai\RetrievalClient;
 use App\Contracts\RunsLegalResearch;
-use App\Grpc\GenerationClient;
-use App\Grpc\GrpcRetrievalClient;
-use App\Grpc\OpenAiCompatibleGenerationClient;
-use App\Grpc\RetrievalClient;
 use App\Services\Agent\HttpAgentClient;
 use App\Services\Logging\AiLogger;
 use Illuminate\Cache\RateLimiting\Limit;

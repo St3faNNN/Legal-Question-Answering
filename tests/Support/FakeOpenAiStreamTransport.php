@@ -2,8 +2,8 @@
 
 namespace Tests\Support;
 
-use App\Grpc\OpenAiStreamHandle;
-use App\Grpc\OpenAiStreamTransport;
+use App\Ai\OpenAiStreamHandle;
+use App\Ai\OpenAiStreamTransport;
 
 /**
  * Scripted {@see OpenAiStreamTransport} for the OpenAI-compatible driver tests.

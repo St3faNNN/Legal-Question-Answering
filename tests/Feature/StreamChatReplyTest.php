@@ -1,8 +1,8 @@
 <?php
 
+use App\Ai\GenerationClient;
+use App\Ai\RetrievalClient;
 use App\Exceptions\AiServiceException;
-use App\Grpc\GenerationClient;
-use App\Grpc\RetrievalClient;
 use App\Jobs\StreamChatReply;
 use App\Models\Conversation;
 use App\Models\User;

@@ -2,8 +2,8 @@
 
 namespace Tests\Support;
 
-use App\Grpc\GenerationClient;
-use App\Grpc\RetrievalClient;
+use App\Ai\GenerationClient;
+use App\Ai\RetrievalClient;
 use RuntimeException;
 
 /**

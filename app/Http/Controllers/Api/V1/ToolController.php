@@ -2,7 +2,7 @@
 
 namespace App\Http\Controllers\Api\V1;
 
-use App\Grpc\RetrievalClient;
+use App\Ai\RetrievalClient;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Tools\FollowReferencesRequest;
 use App\Http\Requests\Tools\SearchLawRequest;

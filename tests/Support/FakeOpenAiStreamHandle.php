@@ -2,7 +2,7 @@
 
 namespace Tests\Support;
 
-use App\Grpc\OpenAiStreamHandle;
+use App\Ai\OpenAiStreamHandle;
 
 /**
  * In-memory {@see OpenAiStreamHandle} for the OpenAI-compatible driver tests.

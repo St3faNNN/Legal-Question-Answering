@@ -1,6 +1,6 @@
 <?php
 
-namespace App\Grpc;
+namespace App\Ai;
 
 use App\Exceptions\AiServiceException;
 use App\Jobs\StreamChatReply;

@@ -105,7 +105,7 @@ x-laravel-env: &laravel-env
 #
 # vendor/, bootstrap/cache, and storage/ are deliberately NOT mounted: they are
 # produced by the image build (Composer deps, the optimized autoloader) and the
-# host has no equivalent. app/Grpc/Pb is generated — regenerate it on the host
+# host has no equivalent. app/Ai/Pb is generated — regenerate it on the host
 # with `bash scripts/gen-proto.sh --php` after changing a .proto, or the mount
 # will hide the image's copy with nothing.
 x-app-source: &app-source

@@ -2,8 +2,8 @@ syntax = "proto3";
 
 package graphrag.retrieval.v1;
 
-option php_namespace = "App\\Grpc\\Pb\\Retrieval";
-option php_metadata_namespace = "App\\Grpc\\Pb\\Retrieval\\GPBMetadata";
+option php_namespace = "App\\Ai\\Pb\\Retrieval";
+option php_metadata_namespace = "App\\Ai\\Pb\\Retrieval\\GPBMetadata";
 
 // Retrieval Service: a natural-language question in, linked knowledge-graph
 // context out. No language generation, no knowledge of users or conversations.

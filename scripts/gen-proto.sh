@@ -2,7 +2,7 @@
 #
 # Generates gRPC stubs from the canonical contracts in proto/ into:
 #   - services/retrieval/app/pb/   (Python)
-#   - app/Grpc/Generated/          (PHP — requires protoc + grpc_php_plugin)
+#   - app/Ai/Pb/                   (PHP — requires protoc + grpc_php_plugin)
 #
 # The Python stubs are committed so the service Docker images need no codegen
 # toolchain at build time. The PHP stubs are generated inside the Laravel Docker
@@ -46,7 +46,7 @@ gen_python() {
 
 if [ "${1:-}" == "--php" ]; then
     # PHP-only. protoc writes the php_namespace verbatim as a directory tree
-    # ("App/Grpc/Pb/..."). Generate into a temp dir, then move that tree under
+    # ("App/Ai/Pb/..."). Generate into a temp dir, then move that tree under
     # the lowercase app/ so it is covered by the existing PSR-4 map (App\ =>
     # app/) with no composer.json change.
     plugin="$(command -v grpc_php_plugin)"
@@ -61,10 +61,10 @@ if [ "${1:-}" == "--php" ]; then
         --grpc_out="$tmp" \
         --plugin=protoc-gen-grpc="$plugin" \
         "$PROTO_DIR/retrieval.proto"
-    mkdir -p "$ROOT_DIR/app/Grpc/Pb"
-    cp -r "$tmp/App/Grpc/Pb/." "$ROOT_DIR/app/Grpc/Pb/"
+    mkdir -p "$ROOT_DIR/app/Ai/Pb"
+    cp -r "$tmp/App/Ai/Pb/." "$ROOT_DIR/app/Ai/Pb/"
     rm -rf "$tmp"
-    echo "[php] generated stubs into app/Grpc/Pb"
+    echo "[php] generated stubs into app/Ai/Pb"
 else
     # Python-only (default): regenerate the committed service stubs.
     gen_python retrieval retrieval.proto

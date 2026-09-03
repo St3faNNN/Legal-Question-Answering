@@ -1,11 +1,11 @@
 <?php
 
+use App\Ai\GenerationClient;
+use App\Ai\OpenAiCompatibleGenerationClient;
+use App\Ai\OpenAiSseParser;
+use App\Ai\OpenAiStreamHandle;
+use App\Ai\OpenAiStreamTransport;
 use App\Exceptions\AiServiceException;
-use App\Grpc\GenerationClient;
-use App\Grpc\OpenAiCompatibleGenerationClient;
-use App\Grpc\OpenAiSseParser;
-use App\Grpc\OpenAiStreamHandle;
-use App\Grpc\OpenAiStreamTransport;
 use App\Services\Logging\AiLogger;
 use Tests\Support\FakeOpenAiStreamTransport;
 use Tests\Support\InertAiClients;

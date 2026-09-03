@@ -1,7 +1,7 @@
 <?php
 
+use App\Ai\RetrievalClient;
 use App\Exceptions\AiServiceException;
-use App\Grpc\RetrievalClient;
 use App\Models\User;
 
 use function Pest\Laravel\actingAs;

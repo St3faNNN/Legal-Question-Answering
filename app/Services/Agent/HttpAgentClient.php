@@ -2,10 +2,10 @@
 
 namespace App\Services\Agent;
 
+use App\Ai\CurlOpenAiStreamTransport;
+use App\Ai\OpenAiStreamTransport;
 use App\Contracts\RunsLegalResearch;
 use App\Exceptions\AiServiceException;
-use App\Grpc\CurlOpenAiStreamTransport;
-use App\Grpc\OpenAiStreamTransport;
 use RuntimeException;
 
 /**

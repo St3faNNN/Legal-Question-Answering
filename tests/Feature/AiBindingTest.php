@@ -1,8 +1,8 @@
 <?php
 
-use App\Grpc\GenerationClient;
-use App\Grpc\OpenAiCompatibleGenerationClient;
-use App\Grpc\RetrievalClient;
+use App\Ai\GenerationClient;
+use App\Ai\OpenAiCompatibleGenerationClient;
+use App\Ai\RetrievalClient;
 use App\Jobs\StreamChatReply;
 use Tests\Support\InertAiClients;
 
@@ -49,14 +49,14 @@ it('resolves the same hosted client whatever ai.generator says', function (strin
 it('has no placeholder or local-generation class left to resolve', function (): void {
     expect(class_exists('App\Services\Chat\PlaceholderReplyGenerator'))->toBeFalse()
         ->and(class_exists('App\Services\Chat\GraphRagReplyGenerator'))->toBeFalse()
-        ->and(class_exists('App\Grpc\GrpcGenerationClient'))->toBeFalse()
+        ->and(class_exists('App\Ai\GrpcGenerationClient'))->toBeFalse()
         // The unary reply path went with the non-streaming endpoint: one
         // implementation behind an interface with one caller is not a seam.
         ->and(interface_exists('App\Contracts\GeneratesReplies'))->toBeFalse()
         ->and(class_exists('App\Services\Chat\GraphRagGrpcReplyGenerator'))->toBeFalse()
         ->and(trait_exists('App\Services\Chat\Concerns\ComposesGraphRagReply'))->toBeFalse()
         // The generation protobuf stubs are gone with the service.
-        ->and(class_exists('App\Grpc\Pb\Generation\GenerationClient'))->toBeFalse();
+        ->and(class_exists('App\Ai\Pb\Generation\GenerationClient'))->toBeFalse();
 });
 
 it('keeps the retrieval layer intact', function (): void {
@@ -65,11 +65,11 @@ it('keeps the retrieval layer intact', function (): void {
     // stub extends \Grpc\BaseStub, so autoloading it without ext-grpc is a fatal
     // error, and ext-grpc only exists inside the Docker image.
     expect(interface_exists(RetrievalClient::class))->toBeTrue()
-        ->and(file_exists(app_path('Grpc/GrpcRetrievalClient.php')))->toBeTrue()
-        ->and(file_exists(app_path('Grpc/Pb/Retrieval/RetrievalClient.php')))->toBeTrue()
+        ->and(file_exists(app_path('Ai/GrpcRetrievalClient.php')))->toBeTrue()
+        ->and(file_exists(app_path('Ai/Pb/Retrieval/RetrievalClient.php')))->toBeTrue()
         ->and(file_exists(base_path('proto/retrieval.proto')))->toBeTrue()
         // …while the generation half of the same layer is gone.
-        ->and(file_exists(app_path('Grpc/Pb/Generation')))->toBeFalse()
+        ->and(file_exists(app_path('Ai/Pb/Generation')))->toBeFalse()
         ->and(file_exists(base_path('proto/generation.proto')))->toBeFalse()
         ->and(file_exists(base_path('services/generation')))->toBeFalse();
 });

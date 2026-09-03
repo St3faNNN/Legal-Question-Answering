@@ -1,6 +1,6 @@
 <?php
 
-namespace App\Grpc;
+namespace App\Ai;
 
 /**
  * Byte-level transport seam under {@see OpenAiCompatibleGenerationClient}.

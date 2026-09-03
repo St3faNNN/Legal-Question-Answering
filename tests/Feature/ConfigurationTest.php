@@ -1,7 +1,7 @@
 <?php
 
+use App\Ai\GenerationClient;
 use App\Contracts\RunsLegalResearch;
-use App\Grpc\GenerationClient;
 use App\Http\Middleware\EnsureUserIsAdmin;
 use App\Models\User;
 use App\Providers\AppServiceProvider;

@@ -1,6 +1,6 @@
 <?php
 
-namespace App\Grpc;
+namespace App\Ai;
 
 /**
  * Transport-agnostic view of the Retrieval Service the reply generator depends

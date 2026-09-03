@@ -1,8 +1,8 @@
 <?php
 
+use App\Ai\GenerationClient;
+use App\Ai\RetrievalClient;
 use App\Exceptions\AiServiceException;
-use App\Grpc\GenerationClient;
-use App\Grpc\RetrievalClient;
 use App\Jobs\StreamChatReply;
 use App\Models\Conversation;
 use App\Models\Message;
@@ -35,13 +35,13 @@ it('has no driver branch left to take', function (): void {
     // point of the comment, so the assertions target code, not prose.)
     expect($provider)->not->toContain("config('ai.generator')")
         ->and($provider)->not->toContain('use App\Services\Chat\PlaceholderReplyGenerator;')
-        ->and($provider)->not->toContain('use App\Grpc\GrpcGenerationClient;')
+        ->and($provider)->not->toContain('use App\Ai\GrpcGenerationClient;')
         ->and(file_get_contents(app_path('Jobs/StreamChatReply.php')))->not->toContain("config('ai.generator')")
         ->and(file_get_contents(app_path('Http/Controllers/Api/V1/ChatController.php')))->not->toContain("config('ai.generator')")
         // And the classes themselves are gone, so no branch could be re-added
         // without also restoring them.
         ->and(class_exists('App\Services\Chat\PlaceholderReplyGenerator'))->toBeFalse()
-        ->and(class_exists('App\Grpc\GrpcGenerationClient'))->toBeFalse();
+        ->and(class_exists('App\Ai\GrpcGenerationClient'))->toBeFalse();
 });
 
 it('records a named provider failure in failed_jobs rather than answering', function (): void {

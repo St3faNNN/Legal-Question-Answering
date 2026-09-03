@@ -1,6 +1,6 @@
 <?php
 
-namespace App\Grpc;
+namespace App\Ai;
 
 use CurlHandle;
 use CurlMultiHandle;

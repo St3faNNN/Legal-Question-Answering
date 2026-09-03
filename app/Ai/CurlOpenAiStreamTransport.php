@@ -1,6 +1,6 @@
 <?php
 
-namespace App\Grpc;
+namespace App\Ai;
 
 /**
  * Production {@see OpenAiStreamTransport}: a raw cURL streaming POST.

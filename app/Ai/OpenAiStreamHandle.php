@@ -1,6 +1,6 @@
 <?php
 
-namespace App\Grpc;
+namespace App\Ai;
 
 /**
  * A single in-flight streaming response opened by {@see OpenAiStreamTransport}.

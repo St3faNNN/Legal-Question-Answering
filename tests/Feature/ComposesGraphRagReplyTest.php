@@ -1,8 +1,8 @@
 <?php
 
+use App\Ai\GenerationClient;
+use App\Ai\RetrievalClient;
 use App\Exceptions\AiServiceException;
-use App\Grpc\GenerationClient;
-use App\Grpc\RetrievalClient;
 use App\Jobs\StreamChatReply;
 use App\Models\Conversation;
 use App\Models\Message;
@@ -12,8 +12,9 @@ use App\Services\Logging\AiLogger;
 use Illuminate\Support\Facades\Redis;
 
 /**
- * The reply composer (ComposesGraphRagReply), exercised through the only path
- * that reaches it: the streaming job.
+ * The reply composition rules — the provisions panel, refusal suppression, the
+ * citation trail — exercised through the only code that applies them: the
+ * streaming job.
  *
  * These tests used to drive POST /api/v1/chat, the non-streaming endpoint. That
  * endpoint is gone — the browser has streamed since the SSE relay landed, and

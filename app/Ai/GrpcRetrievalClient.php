@@ -1,20 +1,20 @@
 <?php
 
-namespace App\Grpc;
+namespace App\Ai;
 
 use App\Exceptions\AiServiceException;
-use App\Grpc\Pb\Retrieval\ReferencesRequest;
-use App\Grpc\Pb\Retrieval\ReferencesResponse;
-use App\Grpc\Pb\Retrieval\RetrievalClient as RetrievalStub;
-use App\Grpc\Pb\Retrieval\RetrieveRequest;
-use App\Grpc\Pb\Retrieval\RetrieveResponse;
+use App\Ai\Pb\Retrieval\ReferencesRequest;
+use App\Ai\Pb\Retrieval\ReferencesResponse;
+use App\Ai\Pb\Retrieval\RetrievalClient as RetrievalStub;
+use App\Ai\Pb\Retrieval\RetrieveRequest;
+use App\Ai\Pb\Retrieval\RetrieveResponse;
 use Grpc\ChannelCredentials;
 
 /**
  * gRPC-backed {@see RetrievalClient}. Wraps the generated protobuf stub and
  * translates transport failures into {@see AiServiceException}. Instantiated
  * wherever the app runs for real — in practice Docker, the only place the PHP
- * grpc extension and the generated stubs under App\Grpc\Pb are present.
+ * grpc extension and the generated stubs under App\Ai\Pb are present.
  * Outside a container this binding is never resolved, because tests bind a fake
  * {@see RetrievalClient} instead.
  */

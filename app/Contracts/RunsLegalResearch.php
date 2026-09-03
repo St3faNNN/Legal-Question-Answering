@@ -2,9 +2,9 @@
 
 namespace App\Contracts;
 
+use App\Ai\GenerationClient;
+use App\Ai\RetrievalClient;
 use App\Exceptions\AiServiceException;
-use App\Grpc\GenerationClient;
-use App\Grpc\RetrievalClient;
 
 /**
  * The escalation path: a multi-hop research run over the corpus, in place of the
