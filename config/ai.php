@@ -34,7 +34,7 @@ return [
     | generation and a practitioner's correctness review all passed, because none
     | of them compares what was shown against what was read. Deriving the panel
     | from this value is what stops the two drifting apart again; see
-    | ComposesGraphRagReply::panelLimit().
+    | StreamChatReply::panelLimit().
     |
     | IMPORTANT: this is one env var read by two processes. In Docker it must be
     | set on the app containers as well as the retrieval container (both are

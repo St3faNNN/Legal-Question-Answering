@@ -22,7 +22,7 @@ use Illuminate\Support\Str;
  */
 class AgentReplyComposer
 {
-    /** Passage text stored per provision. Mirrors ComposesGraphRagReply::CHUNK_TEXT_LIMIT. */
+    /** Passage text stored per provision. Mirrors StreamChatReply::CHUNK_TEXT_LIMIT. */
     private const CHUNK_TEXT_LIMIT = 600;
 
     /**

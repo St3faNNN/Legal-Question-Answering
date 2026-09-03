@@ -233,16 +233,9 @@ export const conversationApi = {
 }
 
 export const chatApi = {
-    async send(message: string, conversationId?: number) {
-        const { data } = await client.post<{
-            conversation: Conversation
-            message: Message
-        }>('/chat', { message, conversation_id: conversationId })
-        return data
-    },
-
-    // Streaming variant: dispatches a queued job and returns a stream id the
-    // client subscribes to via EventSource (see the chat store).
+    // Dispatches a queued job and returns a stream id the client subscribes to
+    // via EventSource (see the chat store). There is no unary alternative: the
+    // non-streaming POST /chat was removed along with its server-side path.
     async stream(message: string, conversationId?: number) {
         const { data } = await client.post<{
             conversation: Conversation

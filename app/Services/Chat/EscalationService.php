@@ -5,6 +5,7 @@ namespace App\Services\Chat;
 use App\Exceptions\EscalationNotAvailableException;
 use App\Exceptions\GenerationBudgetExceededException;
 use App\Jobs\RunAgentEscalation;
+use App\Jobs\StreamChatReply;
 use App\Models\Conversation;
 use App\Models\Message;
 use App\Models\User;
@@ -26,7 +27,7 @@ use Illuminate\Support\Str;
  *     prompt destroyed the refusal marker already in it: on the out-of-corpus army
  *     question the unmodified prompt emitted `[[NO_SOURCE]]` in 6/6 runs, and the
  *     completeness-marker variant emitted it in 0/4 — so the paired signal in
- *     {@see Concerns\ComposesGraphRagReply} stopped suppressing the provisions
+ *     {@see StreamChatReply} stopped suppressing the provisions
  *     panel and five unrelated articles appeared above a refusal every time. The
  *     signal cost more than it bought.
  *   - **Question shape.** A conjunction / question-word heuristic over the 29
@@ -43,7 +44,7 @@ use Illuminate\Support\Str;
  * pipeline had no gap to notice. What the user could not see was the provisions
  * panel, which at the time showed only the top 5 — no self-assessment reaches a
  * display cap. That cap is gone (the panel is now sized from ai.retrieval_top_n,
- * see ComposesGraphRagReply::panelLimit()), which fixes the provenance but not
+ * see StreamChatReply::panelLimit()), which fixes the provenance but not
  * the detection problem: there is still no signal for "this answer was
  * incomplete", so escalation stays user-triggered.
  *

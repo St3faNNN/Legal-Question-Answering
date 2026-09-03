@@ -17,12 +17,11 @@ use Tests\TestCase;
 
 pest()->extend(TestCase::class)
     ->use(RefreshDatabase::class)
-    // Inert AI clients by default. Removing the placeholder generator means
-    // GeneratesReplies always builds the GraphRAG orchestrator, which
-    // constructor-injects the retrieval and generation clients — and the real
-    // retrieval client needs ext-grpc, absent outside the Docker image. These
-    // stand-ins throw if called, so a test that reaches the AI path without
-    // binding its own fake fails loudly instead of passing against a stub.
+    // Inert AI clients by default. With the placeholder generator gone, any
+    // test that touches the reply path resolves the real retrieval client — and
+    // that needs ext-grpc, absent outside the Docker image. These stand-ins
+    // throw if called, so a test that reaches the AI path without binding its
+    // own fake fails loudly instead of passing against a stub.
     ->beforeEach(fn () => InertAiClients::bind())
     ->in('Feature');
 

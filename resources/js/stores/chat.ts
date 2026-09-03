@@ -4,7 +4,7 @@ import { chatApi, type AgentSearch, type GraphTriple, type Message, type Retriev
 
 /**
  * The refusal marker the generation prompt emits (must match
- * ComposesGraphRagReply::REFUSAL_MARKER). It streams into the bubble like any
+ * StreamChatReply::REFUSAL_MARKER). It streams into the bubble like any
  * token, so it is stripped on `done`; the provisions panel is already suppressed
  * server-side, which sends empty `top_chunks`.
  */

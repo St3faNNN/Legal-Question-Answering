@@ -2,11 +2,9 @@
 
 namespace App\Services\Chat;
 
-use App\Contracts\GeneratesReplies;
 use App\Exceptions\GenerationBudgetExceededException;
 use App\Jobs\StreamChatReply;
 use App\Models\Conversation;
-use App\Models\Message;
 use App\Models\User;
 use App\Services\Conversation\ConversationService;
 use App\Services\Logging\AiLogger;
@@ -18,7 +16,6 @@ use Illuminate\Support\Str;
 class ChatService
 {
     public function __construct(
-        private readonly GeneratesReplies $generator,
         private readonly ConversationService $conversations,
         private readonly AiLogger $logger,
         private readonly GenerationBudget $budget,
@@ -44,67 +41,20 @@ class ChatService
     }
 
     /**
-     * Send a user message, generate a reply, and persist both.
-     *
-     * @return array{conversation: Conversation, message: Message}
-     */
-    public function sendMessage(User $user, string $content, ?int $conversationId = null): array
-    {
-        // Charged before anything is persisted, so a request over the daily cap
-        // is refused without leaving a user message behind that never gets a
-        // reply. An escalation is charged from the same meter at three times this
-        // (see config/agent.php), which is what makes it cost something relative
-        // to a normal question.
-        $this->chargeForAnswer($user, $content);
-
-        // Resolving/creating the conversation and persisting the user message
-        // are atomic. Generation runs afterwards so the user message survives a
-        // downstream AI-service failure (see AiServiceException).
-        $conversation = DB::transaction(function () use ($user, $content, $conversationId): Conversation {
-            $conversation = $conversationId !== null
-                ? $this->conversations->findForUser($user, $conversationId)
-                : $this->conversations->createForUser($user);
-
-            $conversation->messages()->create([
-                'role' => 'user',
-                'content' => $content,
-            ]);
-
-            return $conversation;
-        });
-
-        $this->logger->info('chat.message_received', [
-            'conversation_id' => $conversation->id,
-            'message_length' => strlen($content),
-        ]);
-
-        $reply = $this->generator->reply($conversation, $content);
-
-        $assistantMessage = $conversation->messages()->create([
-            'role' => 'assistant',
-            'content' => $reply['answer'],
-            'model' => $reply['model'] ?? null,
-            'tokens' => $reply['tokens'] ?? null,
-            'latency_ms' => $reply['latency_ms'] ?? null,
-            'metadata' => $reply['metadata'] ?? null,
-        ]);
-
-        $this->logger->info('chat.reply_generated', [
-            'conversation_id' => $conversation->id,
-            'model' => $reply['model'] ?? 'placeholder',
-            'tokens' => $reply['tokens'] ?? 0,
-        ]);
-
-        return [
-            'conversation' => $conversation->fresh(),
-            'message' => $assistantMessage,
-        ];
-    }
-
-    /**
      * Persist the user message and dispatch a queued job that streams the reply
      * over a side channel. Returns immediately so the HTTP request is not held
      * open for generation.
+     *
+     * This is the only send path. A unary sendMessage() generated the reply
+     * inline and returned it in the response; it was removed with the
+     * non-streaming endpoint, because a second orchestration of the same work is
+     * a second place for the panel and refusal invariants to drift out of step.
+     *
+     * Charging happens here, before anything is persisted, so a request over the
+     * daily cap is refused without leaving a user message behind that never gets
+     * a reply. An escalation is charged from the same meter at several times this
+     * (see config/agent.php), which is what makes it cost something relative to a
+     * normal question.
      *
      * @return array{conversation: Conversation, stream_id: string}
      */
@@ -117,6 +67,9 @@ class ChatService
 
         $this->chargeForAnswer($user, $content);
 
+        // Resolving/creating the conversation and persisting the user message are
+        // atomic. Generation happens later in the worker, so the user message
+        // survives an AI-service failure (see AiServiceException).
         $conversation = DB::transaction(function () use ($user, $content, $conversationId): Conversation {
             $conversation = $conversationId !== null
                 ? $this->conversations->findForUser($user, $conversationId)

@@ -1,11 +1,9 @@
 <?php
 
-use App\Contracts\GeneratesReplies;
 use App\Grpc\GenerationClient;
 use App\Grpc\OpenAiCompatibleGenerationClient;
 use App\Grpc\RetrievalClient;
 use App\Jobs\StreamChatReply;
-use App\Services\Chat\GraphRagGrpcReplyGenerator;
 use Tests\Support\InertAiClients;
 
 /**
@@ -46,13 +44,17 @@ it('resolves the same hosted client whatever ai.generator says', function (strin
     config(['ai.generator' => $stale]);
 
     expect(app(GenerationClient::class))->toBeInstanceOf(OpenAiCompatibleGenerationClient::class);
-    expect(app(GeneratesReplies::class))->toBeInstanceOf(GraphRagGrpcReplyGenerator::class);
 })->with(['placeholder', 'grpc', 'http', '', 'typo']);
 
 it('has no placeholder or local-generation class left to resolve', function (): void {
     expect(class_exists('App\Services\Chat\PlaceholderReplyGenerator'))->toBeFalse()
         ->and(class_exists('App\Services\Chat\GraphRagReplyGenerator'))->toBeFalse()
         ->and(class_exists('App\Grpc\GrpcGenerationClient'))->toBeFalse()
+        // The unary reply path went with the non-streaming endpoint: one
+        // implementation behind an interface with one caller is not a seam.
+        ->and(interface_exists('App\Contracts\GeneratesReplies'))->toBeFalse()
+        ->and(class_exists('App\Services\Chat\GraphRagGrpcReplyGenerator'))->toBeFalse()
+        ->and(trait_exists('App\Services\Chat\Concerns\ComposesGraphRagReply'))->toBeFalse()
         // The generation protobuf stubs are gone with the service.
         ->and(class_exists('App\Grpc\Pb\Generation\GenerationClient'))->toBeFalse();
 });

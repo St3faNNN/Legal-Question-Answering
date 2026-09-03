@@ -1,9 +1,5 @@
 <?php
 
-use App\Grpc\GenerationClient;
-use App\Grpc\RetrievalClient;
-use App\Models\Conversation;
-use App\Services\Chat\GraphRagGrpcReplyGenerator;
 use App\Services\Chat\NonLegalInputGate;
 
 function gate(): NonLegalInputGate
@@ -72,39 +68,18 @@ it('never gates a real question from the eval set', function (): void {
 
 // --- The gate short-circuits the pipeline: no retrieval, no generation -------
 
-it('answers gated input with no retrieval and no generation call', function (): void {
-    app()->instance(RetrievalClient::class, new class implements RetrievalClient
-    {
-        public function retrieve(string $question): array
-        {
-            throw new RuntimeException('retrieval must not run for gated input');
-        }
+it('answers gated input from a canned bilingual payload with no model', function (): void {
+    // The payload itself. That it reaches the browser with no retrieval and no
+    // generation call is asserted on the streaming job, the only path that
+    // consumes it — see StreamChatReplyTest, 'gates non-legal input in the
+    // stream with no retrieval or generation'.
+    $payload = gate()->gatedPayload();
 
-        public function references(string $law, string $article): array
-        {
-            throw new RuntimeException('references must not run for gated input');
-        }
-    });
-    app()->instance(GenerationClient::class, new class implements GenerationClient
-    {
-        public function generate(string $question, string $context, ?string $entity, array $history): array
-        {
-            throw new RuntimeException('generation must not run for gated input');
-        }
-
-        public function generateStream(string $question, string $context, ?string $entity, array $history): iterable
-        {
-            throw new RuntimeException('generation must not run for gated input');
-        }
-    });
-
-    $conversation = Conversation::factory()->create();
-
-    $result = app(GraphRagGrpcReplyGenerator::class)->reply($conversation, 'Како си?');
-
-    expect($result['metadata']['gated'])->toBeTrue()
-        ->and($result['metadata']['top_chunks'])->toBe([])
-        ->and($result['model'])->toBeNull()
-        ->and($result['answer'])->toContain('правни прашања')
-        ->and($result['answer'])->toContain('legal questions');
+    expect($payload['metadata']['gated'])->toBeTrue()
+        ->and($payload['metadata']['top_chunks'])->toBe([])
+        // No model ran, so no model is claimed: a name here would land in the
+        // dashboard's by-model table as though something generated the answer.
+        ->and($payload['model'])->toBeNull()
+        ->and($payload['answer'])->toContain('правни прашања')
+        ->and($payload['answer'])->toContain('legal questions');
 });

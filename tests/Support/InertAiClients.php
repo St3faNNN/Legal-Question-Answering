@@ -10,7 +10,7 @@ use RuntimeException;
  * Inert AI clients bound by default across the Feature suite.
  *
  * Removing the placeholder generator removed the thing that let a chat
- * controller be *constructed* without an AI backend. GeneratesReplies now always
+ * controller be *constructed* without an AI backend. The reply path now always
  * builds the GraphRAG orchestrator, which constructor-injects RetrievalClient and
  * GenerationClient — and the real RetrievalClient instantiates a gRPC stub, which
  * needs ext-grpc. That extension is absent outside the Docker image, so simply

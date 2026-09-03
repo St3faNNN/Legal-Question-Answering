@@ -115,7 +115,8 @@ it('throws naming LLM_API_KEY when the provider key is missing', function (): vo
 });
 
 it('records a null model rather than a retired local one, and counts it', function (): void {
-    // ComposesGraphRagReply used to fall back to 'qwen2.5-1.5b-instruct' — a model
+    // The reply composer (now StreamChatReply) used to fall back to
+    // 'qwen2.5-1.5b-instruct' — a model
     // that can no longer be run at all — which would have joined the genuine
     // historical bucket in the by-model table.
     $conversation = Conversation::factory()->for(User::factory())->create();

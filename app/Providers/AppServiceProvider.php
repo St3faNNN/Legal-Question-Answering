@@ -2,14 +2,12 @@
 
 namespace App\Providers;
 
-use App\Contracts\GeneratesReplies;
 use App\Contracts\RunsLegalResearch;
 use App\Grpc\GenerationClient;
 use App\Grpc\GrpcRetrievalClient;
 use App\Grpc\OpenAiCompatibleGenerationClient;
 use App\Grpc\RetrievalClient;
 use App\Services\Agent\HttpAgentClient;
-use App\Services\Chat\GraphRagGrpcReplyGenerator;
 use App\Services\Logging\AiLogger;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Contracts\Foundation\Application;
@@ -25,25 +23,23 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
-        // One generation path, not a default among several.
+        // There is no reply-generator binding here any more.
         //
-        // This used to be a match over four drivers whose default arm bound a
+        // It used to be a match over four drivers whose default arm bound a
         // PlaceholderReplyGenerator. That arm was reachable by a typo or an unset
         // AI_GENERATOR — the state the local .env was actually in — and it wrote
         // the literal string "AI service not connected yet." into `messages` as a
         // successful assistant answer: HTTP 201, no exception, no failed_jobs row,
         // and counted as produced by the volume panel. A fabricated answer that
-        // looks like a real one is worse than an outage, so the branch is gone
-        // rather than fixed.
+        // looks like a real one is worse than an outage, so the branch went rather
+        // than being fixed, leaving one implementation behind the interface.
         //
-        // Local generation (llama.cpp / transformers on the same host) is removed
-        // outright: it is not viable on a t3.medium. Retrieval is untouched and
-        // still gRPC.
-        $this->app->bind(
-            GeneratesReplies::class,
-            fn (Application $app): GeneratesReplies => $app->make(GraphRagGrpcReplyGenerator::class),
-        );
-
+        // One implementation behind an interface with one caller is not a seam,
+        // so GeneratesReplies and its single implementation are gone too: the
+        // streaming job orchestrates retrieval and generation directly, and the
+        // seams that still earn their keep are the two clients below, which is
+        // where the tests bind fakes.
+        //
         // gRPC retrieval client — UNCHANGED by the removal of local generation.
         // Retrieval is a separate service on :8001 and stays gRPC. Bound lazily:
         // the closure, and therefore the PHP grpc extension and the generated

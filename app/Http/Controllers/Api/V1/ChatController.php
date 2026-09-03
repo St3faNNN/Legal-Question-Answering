@@ -6,7 +6,6 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Chat\EscalateRequest;
 use App\Http\Requests\Chat\SendMessageRequest;
 use App\Http\Resources\ConversationResource;
-use App\Http\Resources\MessageResource;
 use App\Jobs\StreamChatReply;
 use App\Services\Chat\ChatService;
 use App\Services\Chat\EscalationService;
@@ -24,37 +23,6 @@ class ChatController extends Controller
 
     /**
      * Send a message
-     *
-     * Sends a user message to the chat, creates or continues a conversation,
-     * and returns the assistant's generated reply.
-     *
-     * @group Chat
-     *
-     * @authenticated
-     *
-     * @bodyParam message string required The user's message (max 10000 chars). Example: What is GraphRAG?
-     * @bodyParam conversation_id int optional ID of an existing conversation to continue. Example: 1
-     *
-     * @response 201 {"conversation":{"id":1,"title":null,"created_at":"...","updated_at":"..."},"message":{"id":2,"conversation_id":1,"role":"assistant","content":"...","model":"...","tokens":48,"latency_ms":850,"metadata":{"entities":["..."]},"created_at":"..."}}
-     */
-    public function send(SendMessageRequest $request): JsonResponse
-    {
-        $validated = $request->validated();
-
-        $result = $this->service->sendMessage(
-            $request->user(),
-            $validated['message'],
-            $validated['conversation_id'] ?? null,
-        );
-
-        return response()->json([
-            'conversation' => new ConversationResource($result['conversation']),
-            'message' => new MessageResource($result['message']),
-        ], 201);
-    }
-
-    /**
-     * Send a message (streaming)
      *
      * Persists the user message and dispatches a queued job that streams the
      * assistant reply token-by-token. Returns immediately with a stream id the

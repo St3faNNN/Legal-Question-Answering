@@ -2,62 +2,42 @@
 
 use App\Grpc\GenerationClient;
 use App\Grpc\RetrievalClient;
+use App\Jobs\StreamChatReply;
 use App\Models\Conversation;
 use App\Models\Message;
 use App\Models\User;
+use App\Services\Chat\NonLegalInputGate;
+use App\Services\Logging\AiLogger;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Queue;
+use Illuminate\Support\Facades\Redis;
 
 use function Pest\Laravel\actingAs;
 use function Pest\Laravel\getJson;
 use function Pest\Laravel\postJson;
 
 /**
- * Script the AI layer for a test that actually sends a message.
+ * The chat request surface: conversation resolution, message persistence,
+ * validation and ownership.
  *
- * These used to run against the placeholder generator, which answered every
- * question with "AI service not connected yet." and no model. That driver is
- * gone: it was reachable in production by an unset AI_GENERATOR and wrote that
- * string into `messages` as a real assistant answer, so the chat tests now do
- * what every other AI test does and bind an explicit fake.
+ * There is one send endpoint now. POST /chat — which generated the reply inline
+ * and returned it in the response — is gone; the browser has used POST
+ * /chat/stream since the SSE relay landed, so the unary endpoint was a second
+ * orchestration of the same work that only tests exercised. These cases moved to
+ * the streaming endpoint rather than being deleted with it: what they assert
+ * (the transaction rolls back, a foreign conversation 404s, an empty message is
+ * rejected) is a property of the request, not of how the reply is delivered.
  */
-function bindChatAi(): void
+function fakeStreamDispatch(): void
 {
-    app()->instance(RetrievalClient::class, new class implements RetrievalClient
-    {
-        public function retrieve(string $question): array
-        {
-            return [
-                'context' => "[ZAKON-A, чл. 1]\nОдредба",
-                'entities' => ['ZAKON-A, чл. 1'],
-                'triples' => [],
-                'chunks' => [['id' => '1', 'text' => 'Одредба', 'source' => 'ZAKON-A, чл. 1', 'score' => 1.0]],
-                'context_items' => 1,
-                'latency_ms' => 5,
-            ];
-        }
-
-        public function references(string $law, string $article): array
-        {
-            return ['found' => false, 'source_citation' => '', 'references' => []];
-        }
-    });
-
-    app()->instance(GenerationClient::class, new class implements GenerationClient
-    {
-        public function generate(string $question, string $context, ?string $entity, array $history): array
-        {
-            return ['answer' => 'Одговор од изворите.', 'model' => 'gemini-flash-lite-latest', 'tokens' => 12, 'latency_ms' => 20];
-        }
-
-        public function generateStream(string $question, string $context, ?string $entity, array $history): iterable
-        {
-            return [];
-        }
-    });
+    Queue::fake();
+    Redis::shouldReceive('setex')->andReturnTrue();
 }
 
 describe('chat', function (): void {
     it('rolls back the new conversation when persisting the user message fails', function (): void {
+        fakeStreamDispatch();
+
         $user = User::factory()->create();
         actingAs($user);
 
@@ -66,63 +46,61 @@ describe('chat', function (): void {
             throw new RuntimeException('insert failed');
         });
 
-        postJson('/api/v1/chat', ['message' => 'Hello'])->assertStatus(500);
+        postJson('/api/v1/chat/stream', ['message' => 'Hello'])->assertStatus(500);
 
         // The conversation created in the same transaction must not survive.
         expect($user->conversations()->count())->toBe(0);
     });
 
-    it('creates a conversation and returns a generated reply', function (): void {
-        bindChatAi();
-
-        $user = User::factory()->create();
-        actingAs($user);
-
-        $response = postJson('/api/v1/chat', ['message' => 'Hello, can you help me?'])
-            ->assertCreated()
-            ->assertJsonStructure([
-                'conversation' => ['id', 'title', 'created_at', 'updated_at'],
-                'message' => ['id', 'conversation_id', 'role', 'content', 'model', 'tokens', 'latency_ms', 'metadata'],
-            ]);
-
-        expect($response->json('message.role'))->toBe('assistant')
-            ->and($response->json('message.content'))->toBe('Одговор од изворите.')
-            // A real model name, not the placeholder's null.
-            ->and($response->json('message.model'))->toBe('gemini-flash-lite-latest');
-    });
-
     it('has no placeholder path left that fabricates an answer', function (): void {
-        // The regression this guards: with the driver branch gone, a request that
+        // The regression this guards: with the driver branch gone, a run that
         // reaches generation without a working backend must FAIL, not invent a
         // reply. The suite's inert clients throw, standing in for an outage.
+        //
+        // Asserted against the job rather than the request, because that is where
+        // generation happens now — a fabricated answer would be persisted there
+        // and streamed to the browser, with the HTTP request long since returned.
         $user = User::factory()->create();
-        actingAs($user);
+        $conversation = Conversation::factory()->for($user)->create();
 
-        postJson('/api/v1/chat', ['message' => 'Прашање?'])->assertStatus(500);
+        Redis::shouldReceive('rpush')->andReturn(1);
+        Redis::shouldReceive('expire')->andReturnTrue();
+        Redis::shouldReceive('exists')->andReturn(0);
+        Redis::shouldReceive('setex')->andReturnTrue();
+
+        $run = fn () => (new StreamChatReply($conversation->id, 'stream-inert', 'Прашање?', microtime(true)))->handle(
+            app(RetrievalClient::class),
+            app(GenerationClient::class),
+            app(AiLogger::class),
+            app(NonLegalInputGate::class),
+        );
+
+        expect($run)->toThrow(RuntimeException::class);
 
         // Nothing was written as an assistant answer.
-        expect($user->conversations()->first()?->messages()->where('role', 'assistant')->count() ?? 0)->toBe(0);
+        expect($conversation->messages()->where('role', 'assistant')->count())->toBe(0);
     });
 
-    it('persists the user message and assistant reply', function (): void {
-        bindChatAi();
+    it('persists the user message before the reply is generated', function (): void {
+        // The user's message is committed by the request; the assistant's arrives
+        // later from the worker. So a dispatched-but-unrun stream leaves exactly
+        // one message — which is also what makes a failed generation survivable.
+        fakeStreamDispatch();
 
         $user = User::factory()->create();
         actingAs($user);
 
-        postJson('/api/v1/chat', ['message' => 'Tell me about GraphRAG.']);
+        postJson('/api/v1/chat/stream', ['message' => 'Tell me about GraphRAG.'])->assertStatus(202);
 
         $conversation = $user->conversations()->first();
 
-        expect($conversation->messages)->toHaveCount(2)
+        expect($conversation->messages)->toHaveCount(1)
             ->and($conversation->messages->first()->role)->toBe('user')
-            ->and($conversation->messages->first()->content)->toBe('Tell me about GraphRAG.')
-            ->and($conversation->messages->last()->role)->toBe('assistant')
-            ->and($conversation->messages->last()->content)->toBe('Одговор од изворите.');
+            ->and($conversation->messages->first()->content)->toBe('Tell me about GraphRAG.');
     });
 
     it('continues an existing conversation', function (): void {
-        bindChatAi();
+        fakeStreamDispatch();
 
         $user = User::factory()->create();
         $conversation = Conversation::factory()->for($user)->create();
@@ -137,35 +115,38 @@ describe('chat', function (): void {
 
         actingAs($user);
 
-        $response = postJson('/api/v1/chat', [
+        $response = postJson('/api/v1/chat/stream', [
             'message' => 'Second message',
             'conversation_id' => $conversation->id,
-        ])->assertCreated();
+        ])->assertStatus(202);
 
-        expect($response->json('conversation.id'))->toBe($conversation->id);
-
-        expect($conversation->fresh()->messages)->toHaveCount(4);
+        expect($response->json('conversation.id'))->toBe($conversation->id)
+            ->and($conversation->fresh()->messages)->toHaveCount(3);
     });
 
     it('creates a new conversation when conversation_id is omitted', function (): void {
+        fakeStreamDispatch();
+
         $user = User::factory()->create();
         actingAs($user);
 
         expect($user->conversations()->count())->toBe(0);
 
-        postJson('/api/v1/chat', ['message' => 'New start']);
+        postJson('/api/v1/chat/stream', ['message' => 'New start'])->assertStatus(202);
 
         expect($user->fresh()->conversations()->count())->toBe(1);
     });
 
     it('returns 404 for another user conversation', function (): void {
+        fakeStreamDispatch();
+
         $owner = User::factory()->create();
         $intruder = User::factory()->create();
         $conversation = Conversation::factory()->for($owner)->create();
 
         actingAs($intruder);
 
-        postJson('/api/v1/chat', [
+        postJson('/api/v1/chat/stream', [
             'message' => 'Intrusion attempt',
             'conversation_id' => $conversation->id,
         ])->assertNotFound();
@@ -175,28 +156,43 @@ describe('chat', function (): void {
         $user = User::factory()->create();
         actingAs($user);
 
-        postJson('/api/v1/chat', [])->assertJsonValidationErrorFor('message');
+        postJson('/api/v1/chat/stream', [])->assertJsonValidationErrorFor('message');
     });
 
     it('validates message is not empty', function (): void {
         $user = User::factory()->create();
         actingAs($user);
 
-        postJson('/api/v1/chat', ['message' => ''])->assertJsonValidationErrorFor('message');
+        postJson('/api/v1/chat/stream', ['message' => ''])->assertJsonValidationErrorFor('message');
     });
 
     it('validates conversation_id exists', function (): void {
         $user = User::factory()->create();
         actingAs($user);
 
-        postJson('/api/v1/chat', [
+        postJson('/api/v1/chat/stream', [
             'message' => 'Hello',
             'conversation_id' => 99999,
         ])->assertJsonValidationErrorFor('conversation_id');
     });
 
     it('requires authentication', function (): void {
-        postJson('/api/v1/chat', ['message' => 'Hello'])->assertUnauthorized();
+        postJson('/api/v1/chat/stream', ['message' => 'Hello'])->assertUnauthorized();
+    });
+
+    it('no longer exposes the non-streaming send endpoint', function (): void {
+        // Deleted, not merely unused by the SPA: a second orchestration of the
+        // same work is a second place for the panel/refusal invariants to drift.
+        //
+        // 405 rather than 404 because the SPA's GET catch-all in routes/web.php
+        // matches the path — no POST route exists, which is the point. What
+        // matters is that nothing is persisted and no reply comes back.
+        $user = User::factory()->create();
+        actingAs($user);
+
+        postJson('/api/v1/chat', ['message' => 'Hello'])->assertStatus(405);
+
+        expect($user->conversations()->count())->toBe(0);
     });
 
     it('lists messages for a conversation (cursor paginated)', function (): void {

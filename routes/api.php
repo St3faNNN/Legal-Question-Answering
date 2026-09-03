@@ -62,7 +62,6 @@ Route::prefix('v1')->group(function (): void {
 
     // Chat + messages
     Route::middleware(['auth:sanctum', 'throttle:chat'])->group(function (): void {
-        Route::post('/chat', [ChatController::class, 'send']);
         Route::post('/chat/stream', [ChatController::class, 'stream']);
         Route::get('/conversations/{id}/messages', [MessageController::class, 'index']);
     });
