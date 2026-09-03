@@ -45,13 +45,15 @@ jobs:
           php artisan test
 
   services:
-    # The retrieval and generation services carry the hybrid search and the
-    # generator; without this job their pytest suites are unguarded.
+    # The retrieval service carries the hybrid search; without this job its
+    # pytest suite is unguarded. It used to be a two-service matrix — the
+    # generation service was deleted when generation moved to a hosted endpoint,
+    # and this job kept trying to cd into a directory that no longer exists.
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        service: [retrieval, generation]
+        service: [retrieval]
     steps:
       - uses: actions/checkout@v4
 

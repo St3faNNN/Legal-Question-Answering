@@ -26,6 +26,14 @@
         <env name="DB_CONNECTION" value="sqlite"/>
         <env name="DB_DATABASE" value=":memory:"/>
         <env name="DB_URL" value=""/>
+        <!-- The project's secrets, pinned empty so a local run is as bare as CI's.
+             CI copies .env.example, which ships every secret blank; a developer's
+             .env has real values, so without this a test that resolves a real
+             binding without configuring it passes locally and fails on push.
+             Tests that need a value set it through config(). -->
+        <env name="LLM_API_KEY" value="" force="true"/>
+        <env name="AGENT_API_TOKEN" value="" force="true"/>
+        <env name="AGENT_SERVICE_TOKEN" value="" force="true"/>
         <env name="MAIL_MAILER" value="array"/>
         <env name="QUEUE_CONNECTION" value="sync"/>
         <env name="SESSION_DRIVER" value="array"/>

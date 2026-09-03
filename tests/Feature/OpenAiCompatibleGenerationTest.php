@@ -213,9 +213,15 @@ describe('generation client binding', function (): void {
         // Drop the suite-wide stand-in: this asserts the real container binding.
         InertAiClients::forgetGeneration();
 
+        // Every value the binding reads, including the key. Without an
+        // explicit api_key this passed on a developer machine (whose .env has a
+        // real one) and threw in CI, where .env.example ships it empty — the
+        // test was asserting against whoever ran it. That the MISSING key throws
+        // is covered separately, in ConfigurationTest.
         config([
             'ai.generator' => 'openai_compatible',
             'ai.llm.base_url' => 'https://llm.test/v1/',
+            'ai.llm.api_key' => 'test-key',
             'ai.llm.prompt_path' => base_path('prompts/legal_mk.txt'),
         ]);
 
