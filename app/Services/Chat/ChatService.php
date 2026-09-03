@@ -133,7 +133,7 @@ class ChatService
         $streamId = (string) Str::uuid();
 
         // Record ownership so the SSE endpoint can authorize the subscriber.
-        Redis::setex("chat:stream:{$streamId}:user", 300, (string) $user->id);
+        Redis::setex("chat:stream:{$streamId}:user", (int) config('ai.stream.key_ttl'), (string) $user->id);
 
         StreamChatReply::dispatch($conversation->id, $streamId, $content, $receivedAt);
 
@@ -151,8 +151,10 @@ class ChatService
     /**
      * List messages for a conversation, cursor-paginated.
      */
-    public function listMessages(Conversation $conversation, int $perPage = 20): CursorPaginator
+    public function listMessages(Conversation $conversation, ?int $perPage = null): CursorPaginator
     {
+        $perPage ??= (int) config('limits.per_page.messages');
+
         return $conversation->messages()
             ->orderBy('created_at')
             ->cursorPaginate($perPage);

@@ -14,8 +14,10 @@ class TodoListService
      *
      * @return CursorPaginator<TodoList>
      */
-    public function listForUser(User $user, int $perPage = 15): CursorPaginator
+    public function listForUser(User $user, ?int $perPage = null): CursorPaginator
     {
+        $perPage ??= (int) config('limits.per_page.todo_lists');
+
         return $user->todoLists()
             ->with('items')
             ->orderByDesc('updated_at')

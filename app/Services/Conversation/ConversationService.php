@@ -13,8 +13,10 @@ class ConversationService
      *
      * @return CursorPaginator<Conversation>
      */
-    public function listForUser(User $user, int $perPage = 15): CursorPaginator
+    public function listForUser(User $user, ?int $perPage = null): CursorPaginator
     {
+        $perPage ??= (int) config('limits.per_page.conversations');
+
         return $user->conversations()
             ->withCount('messages')
             ->with('firstUserMessage')

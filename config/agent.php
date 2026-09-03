@@ -22,7 +22,11 @@ return [
 
     'url' => env('AGENT_SERVICE_URL'),
 
-    'token' => env('AGENT_SERVICE_TOKEN', ''),
+    // SECRET — no default. Null when unset. isConfigured() already reads an
+    // absent token as "no agent service", which keeps the control hidden rather
+    // than offering a button that 401s; and a run dispatched by any other route
+    // fails naming the variable (see AppServiceProvider).
+    'token' => env('AGENT_SERVICE_TOKEN'),
 
     /*
     |--------------------------------------------------------------------------
@@ -39,6 +43,14 @@ return [
     'timeout' => (int) env('AGENT_SERVICE_TIMEOUT', 120),
 
     'max_steps' => (int) env('AGENT_MAX_STEPS', 8),
+
+    /*
+    | Seconds to wait for the connection to the agent service to open, as
+    | distinct from the whole-run budget above. Previously the literal 5 on
+    | HttpAgentClient::CONNECT_TIMEOUT.
+    */
+
+    'connect_timeout' => (int) env('AGENT_SERVICE_CONNECT_TIMEOUT', 5),
 
     /*
     |--------------------------------------------------------------------------

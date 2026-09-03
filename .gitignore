@@ -36,6 +36,8 @@ services/**/.pytest_cache/
 .agents/
 .scribe/
 
+backup-*.sql
+
 tests/eval/results/*
 !tests/eval/results/.gitkeep
 
@@ -43,3 +45,4 @@ tests/eval/results/*
 # Present on the host only so docker-compose can mount app/ over the image.
 /app/Grpc/Pb
 
+hf-cache-before.txt

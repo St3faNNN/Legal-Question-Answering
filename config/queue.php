@@ -40,7 +40,15 @@ return [
             'connection' => env('DB_QUEUE_CONNECTION'),
             'table' => env('DB_QUEUE_TABLE', 'jobs'),
             'queue' => env('DB_QUEUE', 'default'),
-            'retry_after' => (int) env('DB_QUEUE_RETRY_AFTER', 90),
+            // DEFAULT CHANGED (2026-09-01) from the framework's 90, deliberately.
+            // The invariant is retry_after > the longest a job legitimately runs.
+            // StreamChatReply derives a timeout of up to 300s on the grpc
+            // fallback, so at 90 the queue re-reserved a still-running job and a
+            // second worker generated the same answer again: a duplicate reply
+            // for the user and duplicate provider spend. docker-compose has set
+            // 360 for exactly this reason; a non-Docker run silently inherited
+            // 90. The default now matches the deployment that was correct.
+            'retry_after' => (int) env('DB_QUEUE_RETRY_AFTER', 360),
             'after_commit' => false,
         ],
 

@@ -48,14 +48,13 @@ class HttpAgentClient implements RunsLegalResearch
 {
     private readonly OpenAiStreamTransport $transport;
 
-    /** Seconds to wait for the connection itself, apart from the run's own budget. */
-    private const CONNECT_TIMEOUT = 5;
-
     public function __construct(
         private readonly string $baseUrl,
         private readonly string $token,
         private readonly int $timeout,
         private readonly int $maxSteps,
+        /** Seconds to wait for the connection itself, apart from the run's budget. */
+        private readonly int $connectTimeout = 5,
         ?OpenAiStreamTransport $transport = null,
     ) {
         $this->transport = $transport ?? new CurlOpenAiStreamTransport;
@@ -71,7 +70,7 @@ class HttpAgentClient implements RunsLegalResearch
                 'Authorization: Bearer '.$this->token,
             ],
             json_encode(['question' => $question, 'maxSteps' => $this->maxSteps], JSON_UNESCAPED_UNICODE),
-            self::CONNECT_TIMEOUT,
+            $this->connectTimeout,
             $this->timeout,
         );
 
