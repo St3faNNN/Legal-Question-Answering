@@ -85,7 +85,7 @@ x-laravel-env: &laravel-env
   # at all — EscalationService::isConfigured() gates the UI control on them, so a
   # deploy without the "agent" profile simply shows no button. See the agent
   # service below.
-  AGENT_SERVICE_URL: ${AGENT_SERVICE_URL:-http://agent:5060}
+  AGENT_SERVICE_URL: ${AGENT_SERVICE_URL:-http://agent:8002}
   AGENT_SERVICE_TOKEN: ${AGENT_SERVICE_TOKEN:-}
   AGENT_SERVICE_TIMEOUT: ${AGENT_SERVICE_TIMEOUT:-120}
   AGENT_MAX_STEPS: ${AGENT_MAX_STEPS:-8}
@@ -261,32 +261,35 @@ services:
       AGENT_APP_URL: http://laravel:8000
       AGENT_API_TOKEN: ${AGENT_API_TOKEN:-}
       AGENT_SERVICE_TOKEN: ${AGENT_SERVICE_TOKEN:-}
-      AGENT_SERVICE_PORT: "5060"
+      # 8002 continues this stack's HTTP numbering — laravel 8000,
+      # retrieval 8001, agent 8002 — and is deliberately NOT 5060. See the
+      # healthcheck note below before changing it.
+      AGENT_SERVICE_PORT: "8002"
       AGENT_MAX_STEPS: ${AGENT_MAX_STEPS:-8}
     depends_on:
       laravel:
         condition: service_healthy
-    # busybox wget, NOT node -e "fetch(...)". This is not a style preference:
-    # 5060 and 5061 are SIP, and both sit on the WHATWG Fetch specification's
-    # blocked-ports list, which undici enforces. Node's fetch refuses the URL
-    # before opening a socket and rejects with the cause "bad port" — on every
-    # address form, every time. It is not intermittent; a probe that seemed to
-    # recover had in fact been replaced.
+    # DO NOT move this service back to 5060. That was the original port, and
+    # 5060/5061 are SIP: both sit on the WHATWG Fetch specification's
+    # blocked-ports list, which undici enforces. Node's fetch refuses such a URL
+    # before opening a socket and rejects with the cause "bad port" — every
+    # address form, every time, with no hint that the port is the problem. It
+    # cost an afternoon once. 6000, 6666 and 10080 are on the same list; 8002 is
+    # not (checked by asking undici directly, not from memory).
     #
-    # Nothing else is affected. The server binds :::5060 dual-stack and answers
-    # a raw socket and wget on 127.0.0.1 with 200, and the app reaches it over
-    # cURL, which has no such list (verified: PHP Http::get on this URL returns
-    # 200 from the laravel container). The block is specific to fetch — so if a
-    # Node client for this service is ever written, move the port off 5060
-    # rather than working around it there.
+    # Nothing was ever broken by it, which is why it survived: the app reaches
+    # this service over cURL, which has no blocked-ports list. Only Node clients
+    # are affected — and health checks, smoke tests and monitoring probes are
+    # exactly what gets written in Node.
     #
-    # -q is quiet on success but still prints the reason on failure, which is
-    # what the old probe could not do: its .catch(() => process.exit(1))
+    # busybox wget rather than node -e "fetch(...)", still, now that the port
+    # allows either. -q is quiet on success but prints the reason on failure,
+    # which the fetch probe could not: its .catch(() => process.exit(1))
     # discarded the error, so every failed check logged an empty string.
     # --spider also fails a non-2xx ("server returned error: HTTP/1.1 503 …"),
-    # so it keeps the r.ok check the fetch probe had.
+    # keeping the r.ok check the fetch probe had.
     healthcheck:
-      test: [ "CMD", "wget", "-q", "--spider", "http://127.0.0.1:5060/health" ]
+      test: [ "CMD", "wget", "-q", "--spider", "http://127.0.0.1:8002/health" ]
       interval: 15s
       timeout: 5s
       start_period: 10s

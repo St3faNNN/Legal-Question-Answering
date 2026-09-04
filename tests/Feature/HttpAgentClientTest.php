@@ -15,7 +15,7 @@ use Tests\Support\FakeOpenAiStreamTransport;
 function agentClient(FakeOpenAiStreamTransport $transport): HttpAgentClient
 {
     return new HttpAgentClient(
-        baseUrl: 'http://agent:5060',
+        baseUrl: 'http://agent:8002',
         token: 'test-secret',
         timeout: 120,
         maxSteps: 8,
@@ -42,7 +42,7 @@ describe('HttpAgentClient', function (): void {
 
         $request = $transport->requests[0];
 
-        expect($request['url'])->toBe('http://agent:5060/run')
+        expect($request['url'])->toBe('http://agent:8002/run')
             ->and($request['headers'])->toContain('Authorization: Bearer test-secret')
             ->and(json_decode($request['body'], true))
             ->toBe(['question' => 'Кои се основите за отказ?', 'maxSteps' => 8]);

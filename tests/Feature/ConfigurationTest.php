@@ -143,7 +143,7 @@ describe('a missing SECRET fails loudly, naming the variable', function (): void
     });
 
     it('refuses to build the agent client without AGENT_SERVICE_TOKEN', function (): void {
-        config(['agent.url' => 'http://agent:5060', 'agent.token' => null]);
+        config(['agent.url' => 'http://agent:8002', 'agent.token' => null]);
 
         expect(fn () => app(RunsLegalResearch::class))
             ->toThrow(RuntimeException::class, 'AGENT_SERVICE_TOKEN');

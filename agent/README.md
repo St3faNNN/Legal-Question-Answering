@@ -90,8 +90,8 @@ The same loop also runs as a small HTTP service, which is how the web app reache
 it — a user escalates one chat answer and the agent re-answers the question.
 
 ```bash
-AGENT_SERVICE_TOKEN=<secret> node src/server.ts    # listens on :5060
-curl -N -X POST http://localhost:5060/run \
+AGENT_SERVICE_TOKEN=<secret> node src/server.ts    # listens on :8002
+curl -N -X POST http://localhost:8002/run \
   -H "Authorization: Bearer <secret>" -H 'Content-Type: application/json' \
   -d '{"question":"Кои се основите за отказ поради технолошки вишок?"}'
 ```
@@ -118,7 +118,7 @@ run started from the web app opens in the inspector below.
 | Variable | Meaning | Default |
 | --- | --- | --- |
 | `AGENT_SERVICE_TOKEN` | bearer secret `/run` requires; unset = refuse everything | — |
-| `AGENT_SERVICE_PORT` | listen port | `5060` |
+| `AGENT_SERVICE_PORT` | listen port | `8002` |
 
 ## Inspect a run
 

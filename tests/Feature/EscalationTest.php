@@ -20,7 +20,7 @@ use function Pest\Laravel\postJson;
  */
 beforeEach(function (): void {
     config([
-        'agent.url' => 'http://agent:5060',
+        'agent.url' => 'http://agent:8002',
         'agent.token' => 'test-secret',
         'agent.budget.daily_units' => 60,
         'agent.budget.pipeline_cost' => 1,

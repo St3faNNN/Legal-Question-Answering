@@ -86,7 +86,11 @@ export function loadConfig(overrides: { maxSteps?: number } = {}): Config {
         // The HTTP service's bearer secret. Only server.ts reads it; the CLI
         // does not need it, so loadConfig never treats it as required.
         serviceToken: (env.AGENT_SERVICE_TOKEN ?? '').trim(),
-        servicePort: toPositiveInt(env.AGENT_SERVICE_PORT, 5060),
+        // 8002, not 5060. SIP's 5060/5061 are on the WHATWG Fetch blocked-ports
+        // list that undici enforces, so a Node client — a health check, a smoke
+        // test — cannot fetch this service at all there: it rejects with "bad
+        // port" before opening a socket. Any replacement must stay off that list.
+        servicePort: toPositiveInt(env.AGENT_SERVICE_PORT, 8002),
     }
 }
 
